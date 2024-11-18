@@ -3,11 +3,13 @@ module github.com/tcfw/otter
 go 1.23.2
 
 require (
+	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/ipfs/boxo v0.24.3
 	github.com/ipfs/go-datastore v0.6.0
 	github.com/libp2p/go-libp2p v0.37.0
 	github.com/libp2p/go-libp2p-kad-dht v0.28.1
 	github.com/libp2p/go-libp2p-record v0.2.0
+	github.com/multiformats/go-multiaddr v0.13.0
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0
 )
@@ -74,7 +76,6 @@ require (
 	github.com/mr-tron/base58 v1.2.0 // indirect
 	github.com/multiformats/go-base32 v0.1.0 // indirect
 	github.com/multiformats/go-base36 v0.2.0 // indirect
-	github.com/multiformats/go-multiaddr v0.13.0 // indirect
 	github.com/multiformats/go-multiaddr-dns v0.4.0 // indirect
 	github.com/multiformats/go-multiaddr-fmt v0.1.0 // indirect
 	github.com/multiformats/go-multibase v0.2.0 // indirect

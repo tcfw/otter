@@ -37,14 +37,25 @@ var daemonCmd = &cobra.Command{
 		fmt.Println("Started...")
 
 		go func() {
-			p2ph := o.P2P()
-			for range time.NewTicker(10 * time.Second).C {
-				fmt.Printf("Connected to %d peers...\n", len(p2ph.Network().Peers()))
-
+			for range time.NewTicker(1 * time.Minute).C {
+				fmt.Printf("Connected to %d peers...\n", len(o.P2P().Network().Peers()))
 			}
 		}()
 
+		// go func() {
+		// 	sub, err := o.P2P().EventBus().Subscribe(&event.EvtLocalAddressesUpdated{})
+		// 	if err != nil {
+		// 		panic(err)
+		// 	}
+
+		// 	for evt := range sub.Out() {
+		// 		fmt.Printf("reachable address changes: %+v", evt)
+		// 	}
+		// }()
+
 		o.Bootstrap(nil)
+
+		fmt.Println("Bootstrapped :)")
 
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM)

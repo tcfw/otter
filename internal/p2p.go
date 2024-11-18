@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/ipfs/boxo/ipns"
 	"github.com/ipfs/go-datastore"
 	"github.com/libp2p/go-libp2p"
@@ -15,6 +16,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
+	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/tcfw/otter/pkg/config"
@@ -40,6 +42,7 @@ var Libp2pOptionsExtra = []libp2p.Option{
 	libp2p.NATPortMap(),
 	libp2p.ConnectionManager(connMgr),
 	libp2p.EnableNATService(),
+	libp2p.EnableHolePunching(),
 	libp2p.EnableRelay(),
 	libp2p.EnableRelayService(),
 }
@@ -73,6 +76,7 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 			ddht, err = newDHT(o.ctx, h, nil)
 			return ddht, err
 		}),
+		libp2p.EnableAutoRelayWithPeerSource(o.dhtPeerSource, autorelay.WithMinInterval(0)),
 	}
 	finalOpts = append(finalOpts, opts...)
 
@@ -132,7 +136,7 @@ func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 				fmt.Print(err)
 				return
 			}
-			fmt.Print("Connected to ", pinfo.ID, "\n")
+			fmt.Print("Connected to bootstrap peer: ", pinfo.ID, "\n")
 			connected <- struct{}{}
 		}(pinfo)
 	}
@@ -154,6 +158,75 @@ func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 	if err != nil {
 		fmt.Print(err)
 		return
+	}
+}
+
+func (o *Otter) dhtPeerSource(ctx context.Context, num int) <-chan peer.AddrInfo {
+	peerChan := make(chan peer.AddrInfo)
+
+	go autoRelayFeeder(ctx, o.p2p, o.dht, peerChan)
+
+	r := make(chan peer.AddrInfo)
+	go func() {
+		defer close(r)
+		for ; num != 0; num-- {
+			select {
+			case v, ok := <-peerChan:
+				if !ok {
+					return
+				}
+				select {
+				case r <- v:
+
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return r
+}
+
+func autoRelayFeeder(ctx context.Context, h host.Host, dht *dualdht.DHT, peerChan chan<- peer.AddrInfo) {
+	bo := backoff.NewExponentialBackOff()
+	bo.InitialInterval = 15 * time.Second
+	bo.Multiplier = 3
+	bo.MaxInterval = 1 * time.Hour
+	bo.MaxElapsedTime = 0 // never stop
+	t := backoff.NewTicker(bo)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			return
+		}
+
+		tctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+
+		closestPeers, err := dht.WAN.GetClosestPeers(tctx, h.ID().String())
+		if err != nil && err != context.DeadlineExceeded {
+			// no-op: usually 'failed to find any peer in table' during startup
+			cancel()
+			continue
+		}
+		cancel()
+
+		for _, p := range closestPeers {
+			addrs := h.Peerstore().Addrs(p)
+			if len(addrs) == 0 {
+				continue
+			}
+			dhtPeer := peer.AddrInfo{ID: p, Addrs: addrs}
+			select {
+			case peerChan <- dhtPeer:
+			case <-ctx.Done():
+				return
+			}
+		}
 	}
 }
 

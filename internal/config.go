@@ -10,14 +10,14 @@ import (
 var (
 	defaultConfig = map[config.ConfigKey]any{
 		config.P2P_ListenAddrs: []string{
-			"/ip4/0.0.0.0/tcp/9999",
-			"/ip6/::/tcp/9999",
-			"/ip4/0.0.0.0/udp/9999/webrtc-direct",
-			"/ip4/0.0.0.0/udp/9999/quic-v1",
-			"/ip4/0.0.0.0/udp/9999/quic-v1/webtransport",
-			"/ip6/::/udp/9999/webrtc-direct",
-			"/ip6/::/udp/9999/quic-v1",
-			"/ip6/::/udp/9999/quic-v1/webtransport",
+			"/ip4/0.0.0.0/tcp/9696",
+			"/ip6/::/tcp/9696",
+			"/ip4/0.0.0.0/udp/9696/webrtc-direct",
+			"/ip4/0.0.0.0/udp/9696/quic-v1",
+			"/ip4/0.0.0.0/udp/9696/quic-v1/webtransport",
+			"/ip6/::/udp/9696/webrtc-direct",
+			"/ip6/::/udp/9696/quic-v1",
+			"/ip6/::/udp/9696/quic-v1/webtransport",
 		},
 	}
 
