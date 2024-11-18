@@ -1,0 +1,63 @@
+package internal
+
+import (
+	"errors"
+
+	"github.com/spf13/viper"
+	"github.com/tcfw/otter/pkg/config"
+)
+
+var (
+	defaultConfig = map[config.ConfigKey]any{
+		config.P2P_ListenAddrs: []string{
+			"/ip4/0.0.0.0/tcp/9999",
+			"/ip6/::/tcp/9999",
+			"/ip4/0.0.0.0/udp/9999/webrtc-direct",
+			"/ip4/0.0.0.0/udp/9999/quic-v1",
+			"/ip4/0.0.0.0/udp/9999/quic-v1/webtransport",
+			"/ip6/::/udp/9999/webrtc-direct",
+			"/ip6/::/udp/9999/quic-v1",
+			"/ip6/::/udp/9999/quic-v1/webtransport",
+		},
+	}
+
+	errUnsupportedSettingType = errors.New("unsupported config value type")
+)
+
+func init() {
+	viper.SetConfigName("otter")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(".")
+	viper.AddConfigPath("$HOME/.otter")
+	viper.AutomaticEnv()
+
+	setDefaultConfig()
+}
+
+func setDefaultConfig() {
+	for k, v := range defaultConfig {
+		viper.SetDefault(string(k), v)
+	}
+}
+
+func (o *Otter) GetConfig(k config.ConfigKey) any {
+	return viper.Get(string(k))
+}
+
+func (o *Otter) GetConfigAs(t any, k config.ConfigKey) any {
+	switch t.(type) {
+	case []string:
+		return viper.GetStringSlice(string(k))
+	default:
+		return nil
+	}
+}
+
+func (o *Otter) SetConfig(k config.ConfigKey, v any) {
+	viper.Set(string(k), v)
+}
+
+func (o *Otter) SetAndStoreConfig(k config.ConfigKey, v any) error {
+	viper.Set(string(k), v)
+	return viper.WriteConfig()
+}
