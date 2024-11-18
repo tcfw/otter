@@ -19,6 +19,7 @@ var (
 			"/ip6/::/udp/9696/quic-v1",
 			"/ip6/::/udp/9696/quic-v1/webtransport",
 		},
+		config.Plugins_LoadDir: "./plugins",
 	}
 
 	errUnsupportedSettingType = errors.New("unsupported config value type")

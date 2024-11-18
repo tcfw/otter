@@ -14,7 +14,9 @@ import (
 	dualdht "github.com/libp2p/go-libp2p-kad-dht/dual"
 	record "github.com/libp2p/go-libp2p-record"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
@@ -45,6 +47,18 @@ var Libp2pOptionsExtra = []libp2p.Option{
 	// libp2p.EnableHolePunching(),
 	libp2p.EnableRelay(),
 	libp2p.EnableRelayService(),
+}
+
+func (o *Otter) Registered() []protocol.ID {
+	return o.p2p.Mux().Protocols()
+}
+
+func (o *Otter) RegisterP2PHandler(protocol protocol.ID, handler network.StreamHandler) {
+	o.p2p.SetStreamHandler(protocol, handler)
+}
+
+func (o *Otter) UnregisterP2PHandler(protocol protocol.ID) {
+	o.p2p.RemoveStreamHandler(protocol)
 }
 
 func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {

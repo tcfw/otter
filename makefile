@@ -4,6 +4,7 @@ COMMIT_HASH=$(shell git rev-parse --short HEAD)
 BUILD_TIMESTAMP=$(shell date '+%Y-%m-%dT%H:%M:%S')
 
 LDFLAGS=-X '${PACKAGE}/internal.version=${VERSION}' -X '${PACKAGE}/internal.commitHash=${COMMIT_HASH}' -X '${PACKAGE}/internal.buildTime=${BUILD_TIMESTAMP}'
+PLUGINS=$(shell ls ./pkg/protos/)
 
 .PHONY: run
 run:
@@ -15,3 +16,10 @@ dist:
 
 clean:
 	rm -rf ./dist/*
+
+.PHONY: ${PLUGINS}
+${PLUGINS}:
+	go build -buildmode=plugin -tags plugin -o dist/plugins/$@.so ./pkg/protos/$@/plugin
+
+.PHONY: plugins
+plugins: ${PLUGINS}

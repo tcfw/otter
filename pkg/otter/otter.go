@@ -9,7 +9,7 @@ import (
 type Otter interface {
 	Protocols() Protocols
 	Crypto() Cryptography
-	Settings()
+	// Settings()
 }
 
 type Protocols interface {
