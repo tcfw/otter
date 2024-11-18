@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/tcfw/otter/internal"
@@ -34,6 +35,7 @@ var daemonCmd = &cobra.Command{
 		}
 		defer o.Stop()
 
+		fmt.Printf("PeerID: %s\n", o.P2P().ID().String())
 		fmt.Println("Started...")
 
 		go func() {
@@ -42,16 +44,20 @@ var daemonCmd = &cobra.Command{
 			}
 		}()
 
-		// go func() {
-		// 	sub, err := o.P2P().EventBus().Subscribe(&event.EvtLocalAddressesUpdated{})
-		// 	if err != nil {
-		// 		panic(err)
-		// 	}
+		go func() {
+			sub, err := o.P2P().EventBus().Subscribe(&event.EvtLocalAddressesUpdated{})
+			if err != nil {
+				panic(err)
+			}
 
-		// 	for evt := range sub.Out() {
-		// 		fmt.Printf("reachable address changes: %+v", evt)
-		// 	}
-		// }()
+			for evt := range sub.Out() {
+				addrEvt := evt.(event.EvtLocalAddressesUpdated)
+				fmt.Printf("\nℹ️ reachable address changes:\n")
+				for _, addr := range addrEvt.Current {
+					fmt.Printf("\t %s/p2p/%s\n", addr.Address.String(), o.P2P().ID().String())
+				}
+			}
+		}()
 
 		o.Bootstrap(nil)
 

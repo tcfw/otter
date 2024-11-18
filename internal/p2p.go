@@ -42,7 +42,7 @@ var Libp2pOptionsExtra = []libp2p.Option{
 	libp2p.NATPortMap(),
 	libp2p.ConnectionManager(connMgr),
 	libp2p.EnableNATService(),
-	libp2p.EnableHolePunching(),
+	// libp2p.EnableHolePunching(),
 	libp2p.EnableRelay(),
 	libp2p.EnableRelayService(),
 }
