@@ -3,7 +3,7 @@ VERSION=$(shell git describe --tags --always --abbrev=0 --match='v[0-9]*.[0-9]*.
 COMMIT_HASH=$(shell git rev-parse --short HEAD)
 BUILD_TIMESTAMP=$(shell date '+%Y-%m-%dT%H:%M:%S')
 
-LDFLAGS=-X '${PACKAGE}/internal.version=${VERSION}' -X '${PACKAGE}/internal.commitHash=${COMMIT_HASH}' -X '${PACKAGE}/internal.buildTime=${BUILD_TIMESTAMP}'
+LDFLAGS=-X '${PACKAGE}/internal/version.version=${VERSION}' -X '${PACKAGE}/internal/version.commitHash=${COMMIT_HASH}' -X '${PACKAGE}/internal/version.buildTime=${BUILD_TIMESTAMP}'
 PLUGINS=$(shell ls ./pkg/protos/)
 
 .PHONY: run

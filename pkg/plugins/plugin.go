@@ -15,6 +15,7 @@ type Plugin interface {
 	Start(otter.Otter) error
 	Name() string
 	Stop()
+	Client() any
 }
 
 func LoadedPlugins() []Plugin {
@@ -25,6 +26,10 @@ func LoadedPlugins() []Plugin {
 	}
 
 	return a
+}
+
+func AddBuiltIn(p Plugin) {
+	loadedPlugins[p.Name()] = p
 }
 
 func LoadAndStart(path string, o otter.Otter) (err error) {

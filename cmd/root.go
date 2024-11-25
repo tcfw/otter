@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/tcfw/otter/internal"
+	"github.com/tcfw/otter/internal/version"
 )
 
 var rootCmd = &cobra.Command{
@@ -20,7 +20,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the version number of Otter",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Otter " + internal.FullVersion())
+		fmt.Println("Otter " + version.FullVersion())
 	},
 }
 

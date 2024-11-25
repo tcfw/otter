@@ -26,4 +26,5 @@ func (ap *ActivityPubPlugin) Start(o otter.Otter) error {
 	return nil
 }
 
-func (ap *ActivityPubPlugin) Stop() {}
+func (ap *ActivityPubPlugin) Stop()       {}
+func (ap *ActivityPubPlugin) Client() any { return nil }

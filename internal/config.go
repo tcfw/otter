@@ -20,6 +20,7 @@ var (
 			"/ip6/::/udp/9696/quic-v1/webtransport",
 		},
 		config.Plugins_LoadDir: "./plugins",
+		config.Storage_Dir:     "./data",
 	}
 
 	errUnsupportedSettingType = errors.New("unsupported config value type")
@@ -49,6 +50,8 @@ func (o *Otter) GetConfigAs(t any, k config.ConfigKey) any {
 	switch t.(type) {
 	case []string:
 		return viper.GetStringSlice(string(k))
+	case string:
+		return viper.GetString(string(k))
 	default:
 		return nil
 	}

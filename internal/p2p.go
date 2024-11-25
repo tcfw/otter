@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -21,7 +22,9 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
+	"github.com/tcfw/otter/internal/version"
 	"github.com/tcfw/otter/pkg/config"
+	"go.uber.org/zap"
 )
 
 var (
@@ -81,13 +84,18 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 		return fmt.Errorf("getting host key: %w", err)
 	}
 
+	batchingDs, ok := o.ds.(datastore.Batching)
+	if !ok {
+		return errors.New("datastore does not support batching")
+	}
+
 	finalOpts := []libp2p.Option{
-		libp2p.UserAgent("otter/" + version),
+		libp2p.UserAgent("otter/" + version.Version()),
 		libp2p.Identity(hostKey),
 		libp2p.ListenAddrs(listenAddrs...),
 		transports,
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
-			ddht, err = newDHT(o.ctx, h, nil)
+			ddht, err = newDHT(o.ctx, h, batchingDs)
 			return ddht, err
 		}),
 		libp2p.EnableAutoRelayWithPeerSource(o.dhtPeerSource, autorelay.WithMinInterval(0)),
@@ -150,7 +158,7 @@ func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 				fmt.Print(err)
 				return
 			}
-			fmt.Print("Connected to bootstrap peer: ", pinfo.ID, "\n")
+			o.logger.Info("Connected to bootstrap peer", zap.Any("peerID", pinfo.ID))
 			connected <- struct{}{}
 		}(pinfo)
 	}
@@ -165,7 +173,7 @@ func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 		i++
 	}
 	if nPeers := len(peers); i < nPeers/2 {
-		fmt.Printf("only connected to %d bootstrap peers out of %d\n", i, nPeers)
+		o.logger.Sugar().Warnf("only connected to %d bootstrap peers out of %d\n", i, nPeers)
 	}
 
 	err := o.dht.Bootstrap(o.ctx)

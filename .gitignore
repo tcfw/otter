@@ -27,3 +27,4 @@ otter.yaml
 
 # build dists
 dist/
+data/
