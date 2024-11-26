@@ -21,6 +21,7 @@ var (
 		},
 		config.Plugins_LoadDir: "./plugins",
 		config.Storage_Dir:     "./data",
+		config.P2P_NAT:         true,
 	}
 
 	errUnsupportedSettingType = errors.New("unsupported config value type")
@@ -52,6 +53,8 @@ func (o *Otter) GetConfigAs(t any, k config.ConfigKey) any {
 		return viper.GetStringSlice(string(k))
 	case string:
 		return viper.GetString(string(k))
+	case bool:
+		return viper.GetBool(string(k))
 	default:
 		return nil
 	}

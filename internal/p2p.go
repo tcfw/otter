@@ -44,9 +44,7 @@ var connMgr, _ = connmgr.NewConnManager(75, 600, connmgr.WithGracePeriod(time.Mi
 // to create a fully featured libp2p host. It can be used with
 // SetupLibp2p.
 var Libp2pOptionsExtra = []libp2p.Option{
-	libp2p.NATPortMap(),
 	libp2p.ConnectionManager(connMgr),
-	libp2p.EnableNATService(),
 	// libp2p.EnableHolePunching(),
 	libp2p.EnableRelay(),
 	libp2p.EnableRelayService(),
@@ -101,6 +99,15 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 		libp2p.EnableAutoRelayWithPeerSource(o.dhtPeerSource, autorelay.WithMinInterval(0)),
 	}
 	finalOpts = append(finalOpts, opts...)
+
+	enableNat := o.GetConfigAs(true, config.P2P_NAT).(bool)
+	if enableNat {
+		o.logger.Info("enabled NAT services")
+		finalOpts = append(finalOpts,
+			libp2p.NATPortMap(),
+			libp2p.EnableNATService(),
+		)
+	}
 
 	h, err := libp2p.New(
 		finalOpts...,
