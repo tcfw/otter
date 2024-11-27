@@ -6,8 +6,11 @@ import (
 	"os"
 	"strings"
 
+	ipfslite "github.com/hsanjuan/ipfs-lite"
 	"github.com/ipfs/go-datastore"
+	ipld "github.com/ipfs/go-ipld-format"
 	dualdht "github.com/libp2p/go-libp2p-kad-dht/dual"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -19,25 +22,33 @@ import (
 
 type Otter struct {
 	ctx    context.Context
+	logger *zap.Logger
+
 	p2p    host.Host
 	dht    *dualdht.DHT
-	logger *zap.Logger
-	ui     *uiConnector
-	ds     datastore.Datastore
+	pubsub *pubsub.PubSub
+	ipld   ipld.DAGService
+
+	ui *uiConnector
+	ds datastore.Batching
+
+	sc *StorageClasses
 }
 
 func (o *Otter) Crypto() otter.Cryptography     { return o }
 func (o *Otter) Protocols() otter.Protocols     { return o }
 func (o *Otter) Logger(comp string) *zap.Logger { return o.logger.Named(comp) }
 func (o *Otter) UI() otter.UI                   { return o.ui }
+func (o *Otter) Storage() *StorageClasses       { return o.sc }
 
 func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 	o := &Otter{
 		ctx:    ctx,
 		logger: logger,
 	}
+	o.sc = &StorageClasses{o}
 
-	ds, err := NewDatastoreStorage(o)
+	ds, err := NewDiskDatastoreStorage(o)
 	if err != nil {
 		return nil, fmt.Errorf("starting datastore: %w", err)
 	}
@@ -47,14 +58,24 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 		return nil, fmt.Errorf("initing libp2p: %w", err)
 	}
 
-	sub, err := o.p2p.EventBus().Subscribe(&event.EvtLocalProtocolsUpdated{})
+	if err := o.setupPubSub(ctx); err != nil {
+		return nil, fmt.Errorf("initing pubsub: %w", err)
+	}
+
+	o.ipld, err = ipfslite.New(ctx, ds, nil, o.p2p, o.dht, nil)
 	if err != nil {
-		return nil, fmt.Errorf("getting sub for protocols: %w", err)
+		return nil, fmt.Errorf("initing ipfs-lite: %w", err)
 	}
 
 	go func() {
+		sub, err := o.p2p.EventBus().Subscribe(&event.EvtLocalProtocolsUpdated{})
+		if err != nil {
+			o.logger.Error("getting eventbus sub for protocols", zap.Error(err))
+			return
+		}
+
 		for evt := range sub.Out() {
-			o.logger.Info("Protocols updated", zap.Any("protocols", evt))
+			o.logger.Debug("Protocols updated", zap.Any("protocols", evt))
 		}
 	}()
 

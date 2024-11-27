@@ -2,7 +2,6 @@ package internal
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -38,14 +37,13 @@ var (
 	}
 )
 
-var connMgr, _ = connmgr.NewConnManager(75, 600, connmgr.WithGracePeriod(time.Minute))
+var connMgr, _ = connmgr.NewConnManager(50, 400, connmgr.WithGracePeriod(30*time.Second))
 
 // Libp2pOptionsExtra provides some useful libp2p options
 // to create a fully featured libp2p host. It can be used with
 // SetupLibp2p.
 var Libp2pOptionsExtra = []libp2p.Option{
 	libp2p.ConnectionManager(connMgr),
-	// libp2p.EnableHolePunching(),
 	libp2p.EnableRelay(),
 	libp2p.EnableRelayService(),
 }
@@ -82,21 +80,16 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 		return fmt.Errorf("getting host key: %w", err)
 	}
 
-	batchingDs, ok := o.ds.(datastore.Batching)
-	if !ok {
-		return errors.New("datastore does not support batching")
-	}
-
 	finalOpts := []libp2p.Option{
 		libp2p.UserAgent("otter/" + version.Version()),
 		libp2p.Identity(hostKey),
 		libp2p.ListenAddrs(listenAddrs...),
 		transports,
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
-			ddht, err = newDHT(o.ctx, h, batchingDs)
+			ddht, err = newDHT(o.ctx, h, o.ds)
 			return ddht, err
 		}),
-		libp2p.EnableAutoRelayWithPeerSource(o.dhtPeerSource, autorelay.WithMinInterval(0)),
+		libp2p.EnableAutoRelayWithPeerSource(o.dhtPeerSource, autorelay.WithMinInterval(5*time.Minute)),
 	}
 	finalOpts = append(finalOpts, opts...)
 
@@ -106,6 +99,7 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 		finalOpts = append(finalOpts,
 			libp2p.NATPortMap(),
 			libp2p.EnableNATService(),
+			libp2p.EnableHolePunching(),
 		)
 	}
 
@@ -156,8 +150,8 @@ func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 
 	var wg sync.WaitGroup
 	for _, pinfo := range peers {
-		//h.Peerstore().AddAddrs(pinfo.ID, pinfo.Addrs, peerstore.PermanentAddrTTL)
 		wg.Add(1)
+
 		go func(pinfo peer.AddrInfo) {
 			defer wg.Done()
 			err := o.p2p.Connect(o.ctx, pinfo)
@@ -165,7 +159,7 @@ func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 				fmt.Print(err)
 				return
 			}
-			o.logger.Info("Connected to bootstrap peer", zap.Any("peerID", pinfo.ID))
+			o.logger.Debug("Bootstrap to peer", zap.Any("peerID", pinfo.ID))
 			connected <- struct{}{}
 		}(pinfo)
 	}

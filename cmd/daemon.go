@@ -48,7 +48,7 @@ var daemonCmd = &cobra.Command{
 
 		go func() {
 			for range time.NewTicker(1 * time.Minute).C {
-				logger.Info("peer count", zap.Any("n", len(o.P2P().Network().Peers())))
+				logger.Debug("peer count", zap.Any("n", len(o.P2P().Network().Peers())))
 			}
 		}()
 
@@ -64,13 +64,12 @@ var daemonCmd = &cobra.Command{
 				for _, addr := range addrEvt.Current {
 					addrs = append(addrs, zap.Any("addr", fmt.Sprintf("%s/p2p/%s", addr.Address.String(), o.P2P().ID().String())))
 				}
-				logger.Info("reachable address changes", addrs...)
+				logger.Debug("reachable address changes", addrs...)
 			}
 		}()
 
 		go func() {
 			o.Bootstrap(nil)
-
 			logger.Info("Bootstrapped")
 		}()
 

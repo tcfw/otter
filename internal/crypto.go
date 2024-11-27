@@ -1,19 +1,28 @@
 package internal
 
 import (
+	"context"
+	"crypto/cipher"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/tcfw/otter/internal/kek"
 	"github.com/tcfw/otter/pkg/config"
+	"github.com/tcfw/otter/pkg/id"
+	"golang.org/x/crypto/chacha20poly1305"
+	"golang.org/x/crypto/hkdf"
+	"golang.org/x/crypto/sha3"
 )
 
 const (
-	dekSize = 32
+	dekSize       = 32
+	storageKeyLen = 32
 )
 
+// HostKey gets or generates an Ed25519 key to be used by a libp2p host
 func (o *Otter) HostKey() (crypto.PrivKey, error) {
 	cv := o.GetConfig(config.P2P_HostKey)
 	if cv == nil {
@@ -48,6 +57,8 @@ func (o *Otter) HostKey() (crypto.PrivKey, error) {
 	return crypto.UnmarshalPrivateKey(v)
 }
 
+// DiskKey reads the sealed DEK from the config file, decrypts it using the KEK
+// If a DEK does not exist, a new one is created and stored in the config
 func (o *Otter) DiskKey() ([]byte, error) {
 	sealedDEK := o.GetConfigAs("", config.Storage_SealedDEK).(string)
 	if sealedDEK == "" {
@@ -79,6 +90,7 @@ func (o *Otter) DiskKey() ([]byte, error) {
 	return k, nil
 }
 
+// newDEK constructs a new Data Encryption Key (DEK)
 func newDEK() ([]byte, error) {
 	dek := make([]byte, dekSize)
 	if n, err := rand.Read(dek); err != nil || n != dekSize {
@@ -86,4 +98,61 @@ func newDEK() ([]byte, error) {
 	}
 
 	return dek, nil
+}
+
+// privateStorageAEAD constructs a AEAD cipher (XChaCha20Poly1305) for encrypting private storage
+func privateStorageAEAD(sk []byte) (cipher.AEAD, error) {
+	aead, err := chacha20poly1305.NewX(sk)
+	if err != nil {
+		return nil, fmt.Errorf("newing Xchacha20: %w", err)
+	}
+
+	return aead, nil
+}
+
+// privateStorageSeal seals protected data via AEAD
+func privateStorageSeal(ci cipher.AEAD, ad []byte) cryptoSealUnSeal {
+	return func(ctx context.Context, b []byte) ([]byte, error) {
+		nSize := ci.NonceSize()
+
+		nonce := make([]byte, nSize+ci.Overhead()+len(b))
+		if n, err := rand.Read(nonce[:nSize]); n != nSize || err != nil {
+			return nil, fmt.Errorf("reading nonce: %w", err)
+		}
+
+		ci.Seal(nonce[nSize:], nonce[:nSize], b, ad)
+
+		return nonce, nil
+	}
+}
+
+// privateStorageUnseal unseals protected data via AEAD
+func privateStorageUnseal(ci cipher.AEAD, ad []byte) cryptoSealUnSeal {
+	return func(ctx context.Context, b []byte) ([]byte, error) {
+		nSize := ci.NonceSize()
+		padded := make([]byte, len(b)-nSize-ci.Overhead())
+
+		_, err := ci.Open(padded, b[:nSize], b[nSize:], ad)
+		if err != nil {
+			return nil, fmt.Errorf("opening sealed private storage block: %w", err)
+		}
+
+		return padded, nil
+	}
+}
+
+// privateKeytoStorageKey outputs a HKDF of at least 32 bytes to be used for storage/block encryption against the key
+func privateKeytoStorageKey(pk id.PrivateKey) ([]byte, error) {
+	r := hkdf.Expand(sha3.New512, []byte(pk), []byte("StorageKey"))
+
+	sk := make([]byte, storageKeyLen)
+	n, err := r.Read(sk)
+	if err != nil {
+		return nil, fmt.Errorf("reading hfdk expansion: %w", err)
+	}
+	if n != storageKeyLen {
+		return nil, errors.New("failed to read all required bytes")
+	}
+
+	return sk, nil
 }

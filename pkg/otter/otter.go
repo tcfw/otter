@@ -28,8 +28,9 @@ type Storage interface {
 }
 
 type StorageClasses interface {
-	Public(pub id.PublicID) Storage
-	Private(pk id.PrivateKey) Storage
+	Public(pub id.PublicID) (Storage, error)
+	Private(pk id.PrivateKey) (Storage, error)
+	System() (Storage, error)
 }
 
 type Protocols interface {
