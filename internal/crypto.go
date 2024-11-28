@@ -5,11 +5,16 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 
+	"github.com/ipfs/go-datastore/query"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/tcfw/otter/internal/kek"
+	v1api "github.com/tcfw/otter/pkg/api"
 	"github.com/tcfw/otter/pkg/config"
 	"github.com/tcfw/otter/pkg/id"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -155,4 +160,107 @@ func privateKeytoStorageKey(pk id.PrivateKey) ([]byte, error) {
 	}
 
 	return sk, nil
+}
+
+func (o *Otter) apiHandle_Keys_NewKey(w http.ResponseWriter, r *http.Request) {
+	req := &v1api.NewKeyRequest{}
+
+	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+		apiJSONError(w, fmt.Errorf("decoding body: %w", err))
+		return
+	}
+
+	if len(req.Password) < 8 {
+		apiJSONErrorWithStatus(w, errors.New("password must be at least 8 characters"), http.StatusBadRequest)
+		return
+	}
+
+	mn, pub, priv, err := id.NewKey(req.Password)
+	if err != nil {
+		apiJSONError(w, fmt.Errorf("creating new key: %w", err))
+		return
+	}
+
+	ss, err := o.sc.System()
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	if err := ss.Put(r.Context(), "/keys/"+string(pub), []byte(priv)); err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	w.Header().Add("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v1api.NewKeyResponse{
+		Mnemonic: mn,
+		PublicID: pub,
+	})
+}
+
+func (o *Otter) apiHandle_Keys_List(w http.ResponseWriter, r *http.Request) {
+	ss, err := o.sc.System()
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	q, err := ss.Query(r.Context(), query.Query{Prefix: "keys/", KeysOnly: true})
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	keys, err := q.Rest()
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	resp := v1api.KeyListResponse{
+		Keys: []id.PublicID{},
+	}
+	for _, k := range keys {
+		resp.Keys = append(resp.Keys, id.PublicID(strings.TrimPrefix(k.Key, "keys/")))
+	}
+
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (o *Otter) apiHandle_Keys_Delete(w http.ResponseWriter, r *http.Request) {
+	req := &v1api.DeleteKeyRequest{}
+
+	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	if req.Password == "" || req.PublicID == "" {
+		apiJSONErrorWithStatus(w, errors.New("missing fields"), http.StatusBadRequest)
+		return
+	}
+
+	ss, err := o.sc.System()
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	keyRef := "keys/" + string(req.PublicID)
+
+	ok, err := ss.Has(r.Context(), keyRef)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+	if !ok {
+		apiJSONErrorWithStatus(w, errors.New("key does not exist"), http.StatusNotFound)
+		return
+	}
+
+	if err := ss.Delete(r.Context(), keyRef); err != nil {
+		apiJSONError(w, err)
+		return
+	}
 }

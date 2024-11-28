@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/gorilla/mux"
 	ipfslite "github.com/hsanjuan/ipfs-lite"
 	"github.com/ipfs/go-datastore"
 	ipld "github.com/ipfs/go-ipld-format"
@@ -33,6 +34,8 @@ type Otter struct {
 	ds datastore.Batching
 
 	sc *StorageClasses
+
+	apiRouter *mux.Router
 }
 
 func (o *Otter) Crypto() otter.Cryptography     { return o }
@@ -60,6 +63,10 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 
 	if err := o.setupPubSub(ctx); err != nil {
 		return nil, fmt.Errorf("initing pubsub: %w", err)
+	}
+
+	if err := o.setupAPI(ctx); err != nil {
+		return nil, fmt.Errorf("initing api: %w", err)
 	}
 
 	o.ipld, err = ipfslite.New(ctx, ds, nil, o.p2p, o.dht, nil)
@@ -128,11 +135,11 @@ func (o *Otter) HostID() peer.ID {
 
 func (o *Otter) Stop() error {
 	if err := o.stopP2P(); err != nil {
-		return err
+		o.logger.Error("stopping p2p", zap.Error(err))
 	}
 
 	if err := o.ds.Close(); err != nil {
-		return err
+		o.logger.Error("closing main datastore", zap.Error(err))
 	}
 
 	return nil

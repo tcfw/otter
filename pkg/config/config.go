@@ -6,6 +6,8 @@ const (
 	Storage_Dir       ConfigKey = "storage.dir"
 	Storage_SealedDEK ConfigKey = "storage.sealedDEK"
 
+	API_ListenAddrs ConfigKey = "api.listenAddrs"
+
 	P2P_ListenAddrs    ConfigKey = "p2p.listenAddrs"
 	P2P_HostKey        ConfigKey = "p2p.hostKey"
 	P2P_BootstrapAddrs ConfigKey = "p2p.bootstrapAddrs"

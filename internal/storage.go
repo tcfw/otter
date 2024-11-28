@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/query"
@@ -67,8 +68,13 @@ func (sc *StorageClasses) System() (*NamespacedStorage, error) {
 // Public provides a storage class for a given public key
 // No values or keys are encrypted and objects are assumed to be globally shareable
 func (sc *StorageClasses) Public(pub id.PublicID) (*NamespacedStorage, error) {
+	syncer, err := sc.o.GetOrNewAccountSyncer(sc.o.ctx, pub)
+	if err != nil {
+		return nil, fmt.Errorf("getting account syncer: %w", err)
+	}
+
 	return &NamespacedStorage{
-		Datastore: sc.o.ds,
+		Datastore: syncer.publicSyncer,
 		logger:    sc.o.logger.Named("public_storage"),
 		ns:        publicKeyPrefix + string(pub),
 	}, nil
@@ -85,6 +91,11 @@ func (sc *StorageClasses) Private(pk id.PrivateKey) (*NamespacedStorage, error) 
 		return nil, fmt.Errorf("getting public key: %w", err)
 	}
 
+	syncer, err := sc.o.GetOrNewAccountSyncer(sc.o.ctx, pubk)
+	if err != nil {
+		return nil, fmt.Errorf("getting account syncer: %w", err)
+	}
+
 	sk, err := privateKeytoStorageKey(pk)
 	if err != nil {
 		return nil, fmt.Errorf("getting storage key: %w", err)
@@ -98,7 +109,7 @@ func (sc *StorageClasses) Private(pk id.PrivateKey) (*NamespacedStorage, error) 
 	ad := []byte(pubk)
 
 	ns := &NamespacedStorage{
-		Datastore: sc.o.ds,
+		Datastore: syncer.privateSyncer,
 		logger:    sc.o.logger.Named("private_storage"),
 		ns:        privateKeyPrefix + string(pubk),
 		seal:      privateStorageSeal(aead, ad),
@@ -140,6 +151,11 @@ func (nss *NamespacedStorage) Get(ctx context.Context, k string) ([]byte, error)
 	}
 
 	return val, nil
+}
+
+// Has returns whether the `key` is mapped to a `value`.
+func (nss *NamespacedStorage) Has(ctx context.Context, k string) (bool, error) {
+	return nss.Datastore.Has(ctx, nss.formatKey(k))
 }
 
 // Put adds a key/value to the datastore
@@ -203,6 +219,7 @@ func (nsr *NamespacedQueryResults) Next() <-chan query.Result {
 					r.Value = v
 				}
 			}
+			r.Key = strings.TrimPrefix(r.Key, nsr.nss.ns)
 			ch <- r
 		}
 	}()
@@ -223,6 +240,8 @@ func (nsr *NamespacedQueryResults) NextSync() (query.Result, bool) {
 		}
 	}
 
+	val.Key = strings.TrimPrefix(val.Key, nsr.nss.ns)
+
 	return val, ok
 }
 
@@ -237,6 +256,8 @@ func (nsr *NamespacedQueryResults) Rest() ([]query.Entry, error) {
 			}
 			r.Value = v
 		}
+
+		r.Key = strings.TrimPrefix(r.Key, nsr.nss.ns)
 		es = append(es, r.Entry)
 	}
 

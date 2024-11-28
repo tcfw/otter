@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ipfs/go-datastore"
 	crdt "github.com/ipfs/go-ds-crdt"
@@ -17,6 +18,7 @@ import (
 
 const (
 	syncerTopicPrefix = "/otter/sync/"
+	syncInterval      = 30 * time.Second
 )
 
 var (
@@ -25,6 +27,9 @@ var (
 )
 
 type syncer struct {
+	ctx    context.Context
+	cancel func()
+
 	publicSyncer  *crdt.Datastore
 	privateSyncer *crdt.Datastore
 }
@@ -37,6 +42,8 @@ func (s *syncer) Close() error {
 	if err := s.privateSyncer.Close(); err != nil {
 		return fmt.Errorf("closing private syncer: %w", err)
 	}
+
+	s.cancel()
 
 	return nil
 }
@@ -69,16 +76,16 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 func (o *Otter) getAllowedSyncerPeers(ctx context.Context, pubk id.PublicID) ([]peer.ID, error) {
 	sc, err := o.Storage().Public(pubk)
 	if err != nil {
-		return nil, fmt.Errorf("getting account public store: %w", zap.Error(err))
+		return nil, fmt.Errorf("getting account public store: %w", err)
 	}
 
-	rawPeerList, err := sc.Get(context.Background(), "storagePeers")
+	rawPeerList, err := sc.Get(ctx, "storagePeers")
 	if err != nil {
-		return nil, fmt.Errorf("getting storage peer list: %w", err)
+		return nil, fmt.Errorf("getting storage peer allow list: %w", err)
 	}
 
 	peerList := []peer.ID{}
-	if err := json.Unmarshal(rawPeerList, peerList); err != nil {
+	if err := json.Unmarshal(rawPeerList, &peerList); err != nil {
 		return nil, fmt.Errorf("decoding storage peer list: %w", err)
 	}
 
@@ -89,6 +96,7 @@ func (o *Otter) GetOrNewAccountSyncer(ctx context.Context, pubk id.PublicID) (*s
 	accountSyncersMu.RLock()
 	ds, ok := accountSyncers[pubk]
 	accountSyncersMu.RUnlock()
+
 	if !ok {
 		nds, err := o.newAccountSyncer(ctx, pubk)
 		if err != nil {
@@ -106,24 +114,48 @@ func (o *Otter) GetOrNewAccountSyncer(ctx context.Context, pubk id.PublicID) (*s
 }
 
 func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer, error) {
+	sctx, cancel := context.WithCancel(ctx)
+
 	topic := syncerTopicPrefix + string(pubk)
 
-	bs, err := crdt.NewPubSubBroadcaster(ctx, o.pubsub, topic)
+	bs, err := crdt.NewPubSubBroadcaster(sctx, o.pubsub, topic)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("creating syncer broadcaster: %w", err)
 	}
 
 	publicSyncer, err := crdt.New(o.ds, datastore.NewKey(publicKeyPrefix+string(pubk)), o.ipld, bs, nil)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("creating public syncer: %w", err)
 	}
 
 	privateSyncer, err := crdt.New(o.ds, datastore.NewKey(privateKeyPrefix+string(pubk)), o.ipld, bs, nil)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("creating private syncer: %w", err)
 	}
 
-	return &syncer{publicSyncer, privateSyncer}, nil
+	go func() {
+		t := time.NewTicker(syncInterval)
+
+		for {
+			select {
+			case <-sctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+				if err := publicSyncer.Sync(sctx, datastore.NewKey("/")); err != nil {
+					o.logger.Error("syncing public syncer", zap.Error(err))
+				}
+				if err := privateSyncer.Sync(sctx, datastore.NewKey("/")); err != nil {
+					o.logger.Error("syncing private syncer", zap.Error(err))
+				}
+			}
+		}
+	}()
+
+	return &syncer{sctx, cancel, publicSyncer, privateSyncer}, nil
 }
 
 func (o *Otter) StopAccountSyncer(ctx context.Context, pubk id.PublicID) error {

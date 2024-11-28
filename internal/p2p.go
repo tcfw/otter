@@ -95,7 +95,8 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 
 	enableNat := o.GetConfigAs(true, config.P2P_NAT).(bool)
 	if enableNat {
-		o.logger.Info("enabled NAT services")
+		o.logger.Info("enabling NAT services")
+
 		finalOpts = append(finalOpts,
 			libp2p.NATPortMap(),
 			libp2p.EnableNATService(),

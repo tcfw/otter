@@ -13,7 +13,7 @@ var (
 )
 
 func (o *Otter) setupPubSub(ctx context.Context) error {
-	psub, err := pubsub.NewGossipSub(ctx, o.p2p, pubsub.WithPeerFilter(o.syncerPubSubFilter))
+	psub, err := pubsub.NewGossipSub(ctx, o.p2p, pubsub.WithPeerFilter(o.pubsubChainFilter))
 	if err != nil {
 		return fmt.Errorf("initing pubsub: %w", err)
 	}

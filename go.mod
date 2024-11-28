@@ -5,6 +5,7 @@ go 1.23.2
 require (
 	fyne.io/fyne/v2 v2.5.2
 	github.com/cenkalti/backoff/v4 v4.3.0
+	github.com/gorilla/mux v1.8.1
 	github.com/hsanjuan/ipfs-lite v1.8.2
 	github.com/ipfs/boxo v0.24.3
 	github.com/ipfs/go-datastore v0.6.0

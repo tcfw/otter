@@ -22,6 +22,10 @@ var (
 		config.Plugins_LoadDir: "./plugins",
 		config.Storage_Dir:     "./data",
 		config.P2P_NAT:         true,
+		config.API_ListenAddrs: []string{
+			"/ip4/127.0.0.1/tcp/9697",
+			"/ip6/::1/tcp/9697",
+		},
 	}
 
 	errUnsupportedSettingType = errors.New("unsupported config value type")
