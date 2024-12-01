@@ -18,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/core/routing"
+	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
@@ -155,7 +156,6 @@ func newDHT(ctx context.Context, h host.Host, ds datastore.Batching) (*dualdht.D
 	}
 
 	return dualdht.New(ctx, h, dhtOpts...)
-
 }
 
 func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
@@ -284,4 +284,31 @@ func parseBootstrapPeers(addrs []string) ([]peer.AddrInfo, error) {
 		}
 	}
 	return peer.AddrInfosFromP2pAddrs(maddrs...)
+}
+
+func (o *Otter) setupMdns() error {
+	n := &mDNSNotifee{o}
+
+	o.mdns = mdns.NewMdnsService(o.p2p, "", n)
+
+	if err := o.mdns.Start(); err != nil {
+		return fmt.Errorf("starting mdns service: %w", err)
+	}
+
+	o.logger.Debug("started mDNS discovery")
+
+	return nil
+}
+
+type mDNSNotifee struct {
+	o *Otter
+}
+
+func (m *mDNSNotifee) HandlePeerFound(peer peer.AddrInfo) {
+	m.o.logger.Debug("found mDNS peer", zap.Any("peer", peer.String()))
+
+	ctx, cancel := context.WithTimeout(m.o.ctx, 10*time.Second)
+	defer cancel()
+
+	m.o.p2p.Connect(ctx, peer)
 }

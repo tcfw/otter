@@ -16,6 +16,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/tcfw/otter/pkg/config"
 	"github.com/tcfw/otter/pkg/otter"
 	"github.com/tcfw/otter/pkg/plugins"
@@ -30,6 +31,7 @@ type Otter struct {
 	dht    *dualdht.DHT
 	pubsub *pubsub.PubSub
 	ipld   ipld.DAGService
+	mdns   mdns.Service
 	rm     network.ResourceManager
 
 	ui *uiConnector
@@ -69,6 +71,10 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 
 	if err := o.setupAPI(ctx); err != nil {
 		return nil, fmt.Errorf("initing api: %w", err)
+	}
+
+	if err := o.setupMdns(); err != nil {
+		o.logger.Error("setting up mDNS discovery service: %w", zap.Error(err))
 	}
 
 	o.ipld, err = ipfslite.New(ctx, ds, nil, o.p2p, o.dht, nil)
@@ -136,6 +142,10 @@ func (o *Otter) HostID() peer.ID {
 }
 
 func (o *Otter) Stop() error {
+	if err := o.mdns.Close(); err != nil {
+		o.logger.Error("stopping mdns discovery service", zap.Error(err))
+	}
+
 	if err := o.stopP2P(); err != nil {
 		o.logger.Error("stopping p2p", zap.Error(err))
 	}
