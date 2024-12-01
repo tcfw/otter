@@ -3,6 +3,7 @@ package id
 import (
 	"crypto"
 	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"fmt"
 
@@ -134,4 +135,23 @@ func NewKey(pk string) (string, PublicID, PrivateKey, error) {
 	}
 
 	return mnemonic, pubk, privk, nil
+}
+
+func Sign(epk PrivateKey, data []byte, hasher crypto.Hash) ([]byte, error) {
+	pk, err := DecodeCryptoMaterial(string(epk))
+	if err != nil {
+		return nil, fmt.Errorf("decoding key: %w", err)
+	}
+
+	switch p := pk.(type) {
+	case ed25519.PrivateKey:
+		sig, err := p.Sign(rand.Reader, data, hasher)
+		if err != nil {
+			return nil, fmt.Errorf("signing data:%w", err)
+		}
+
+		return sig, nil
+	default:
+		return nil, fmt.Errorf("known key type: %T", p)
+	}
 }

@@ -14,6 +14,7 @@ import (
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/tcfw/otter/pkg/config"
 	"github.com/tcfw/otter/pkg/otter"
@@ -29,6 +30,7 @@ type Otter struct {
 	dht    *dualdht.DHT
 	pubsub *pubsub.PubSub
 	ipld   ipld.DAGService
+	rm     network.ResourceManager
 
 	ui *uiConnector
 	ds datastore.Batching
@@ -140,6 +142,10 @@ func (o *Otter) Stop() error {
 
 	if err := o.ds.Close(); err != nil {
 		o.logger.Error("closing main datastore", zap.Error(err))
+	}
+
+	if err := o.rm.Close(); err != nil {
+		o.logger.Error("closing resource manager", zap.Error(err))
 	}
 
 	return nil

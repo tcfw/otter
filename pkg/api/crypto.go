@@ -1,6 +1,10 @@
 package api
 
-import "github.com/tcfw/otter/pkg/id"
+import (
+	"crypto"
+
+	"github.com/tcfw/otter/pkg/id"
+)
 
 type NewKeyRequest struct {
 	Password string `json:"password"`
@@ -18,4 +22,14 @@ type KeyListResponse struct {
 type DeleteKeyRequest struct {
 	PublicID id.PublicID `json:"publicID"`
 	Password string      `json:"password"`
+}
+
+type SignRequest struct {
+	Data     []byte      `json:"data"`
+	PublicID id.PublicID `json:"publicID"`
+	HashID   crypto.Hash `json:"hashID"`
+}
+
+type SignResponse struct {
+	Sig []byte `json:"sig"`
 }

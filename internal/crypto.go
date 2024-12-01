@@ -264,3 +264,54 @@ func (o *Otter) apiHandle_Keys_Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
+
+func (o *Otter) apiHandle_Keys_Sign(w http.ResponseWriter, r *http.Request) {
+	req := &v1api.SignRequest{}
+
+	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	if len(req.Data) == 0 {
+		apiJSONErrorWithStatus(w, errors.New("no data supplied"), http.StatusBadRequest)
+		return
+	}
+
+	if req.PublicID == "" {
+		apiJSONErrorWithStatus(w, errors.New("no publicID supplied"), http.StatusBadRequest)
+		return
+	}
+
+	ss, err := o.sc.System()
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	keyRef := "keys/" + string(req.PublicID)
+
+	ok, err := ss.Has(r.Context(), keyRef)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+	if !ok {
+		apiJSONErrorWithStatus(w, errors.New("key does not exist"), http.StatusNotFound)
+		return
+	}
+
+	rpk, err := ss.Get(r.Context(), keyRef)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	sig, err := id.Sign(id.PrivateKey(rpk), req.Data, req.HashID)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	json.NewEncoder(w).Encode(v1api.SignResponse{Sig: sig})
+}

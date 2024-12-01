@@ -59,6 +59,7 @@ func (o *Otter) initAPIRouter() error {
 	r.HandleFunc("/keys/new", o.apiHandle_Keys_NewKey).Methods(http.MethodPost)
 	r.HandleFunc("/keys", o.apiHandle_Keys_List).Methods(http.MethodGet)
 	r.HandleFunc("/keys", o.apiHandle_Keys_Delete).Methods(http.MethodDelete)
+	r.HandleFunc("/keys/sign", o.apiHandle_Keys_Sign).Methods(http.MethodPost)
 
 	o.apiRouter = r
 	return nil

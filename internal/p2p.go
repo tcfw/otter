@@ -19,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/tcfw/otter/internal/version"
@@ -80,7 +81,26 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 		return fmt.Errorf("getting host key: %w", err)
 	}
 
+	scalingLimits := rcmgr.DefaultLimits
+	libp2p.SetDefaultServiceLimits(&scalingLimits)
+	scaledDefaultLimits := scalingLimits.AutoScale()
+
+	cfg := rcmgr.PartialLimitConfig{
+		System: rcmgr.ResourceLimits{
+			// Allow unlimited outbound streams
+			StreamsOutbound: rcmgr.Unlimited,
+		},
+	}
+
+	limiter := rcmgr.NewFixedLimiter(cfg.Build(scaledDefaultLimits))
+
+	o.rm, err = rcmgr.NewResourceManager(limiter)
+	if err != nil {
+		return fmt.Errorf("creating libp2p resource manager: %w", err)
+	}
+
 	finalOpts := []libp2p.Option{
+		libp2p.ResourceManager(o.rm),
 		libp2p.UserAgent("otter/" + version.Version()),
 		libp2p.Identity(hostKey),
 		libp2p.ListenAddrs(listenAddrs...),
