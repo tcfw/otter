@@ -26,6 +26,11 @@ var (
 			"/ip4/127.0.0.1/tcp/9697",
 			"/ip6/::1/tcp/9697",
 		},
+		config.POIS_ListenAddrs: []string{
+			"/ip4/0.0.0.0/tcp/9698",
+			"/ip6/::/tcp/9698",
+		},
+		config.POIS_EnableTLS: false,
 	}
 
 	errUnsupportedSettingType = errors.New("unsupported config value type")

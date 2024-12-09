@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	libp2pCrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/multiformats/go-multibase"
 	"github.com/multiformats/go-multicodec"
 	"github.com/multiformats/go-varint"
@@ -23,6 +24,20 @@ type PrivateKey string
 
 type publicableCrypto interface {
 	Public() crypto.PublicKey
+}
+
+func (pubk PublicID) AsLibP2P() (libp2pCrypto.PubKey, error) {
+	dc, err := DecodeCryptoMaterial(string(pubk))
+	if err != nil {
+		return nil, fmt.Errorf("decoding public key: %w", err)
+	}
+
+	switch pkt := dc.(type) {
+	case ed25519.PublicKey:
+		return libp2pCrypto.UnmarshalEd25519PublicKey(pkt)
+	default:
+		return nil, fmt.Errorf("unsupported key type: %T", pkt)
+	}
 }
 
 // PublicKey returns the encoded public key

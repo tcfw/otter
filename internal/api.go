@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -55,11 +56,22 @@ func (o *Otter) setupAPI(ctx context.Context) error {
 func (o *Otter) initAPIRouter() error {
 	r := mux.NewRouter()
 
-	r.HandleFunc("/version", o.apiHandle_Version)
-	r.HandleFunc("/keys/new", o.apiHandle_Keys_NewKey).Methods(http.MethodPost)
-	r.HandleFunc("/keys", o.apiHandle_Keys_List).Methods(http.MethodGet)
-	r.HandleFunc("/keys", o.apiHandle_Keys_Delete).Methods(http.MethodDelete)
-	r.HandleFunc("/keys/sign", o.apiHandle_Keys_Sign).Methods(http.MethodPost)
+	r.Use(o.authMiddleware)
+
+	apis := r.PathPrefix("/api").Subrouter()
+
+	apis.HandleFunc("/version", o.apiHandle_Version)
+
+	apis.HandleFunc("/oauth/token", o.apiHandle_OAuth_Token)
+
+	apis.HandleFunc("/keys/new", o.apiHandle_Keys_NewKey).Methods(http.MethodPost)
+	apis.HandleFunc("/keys", o.apiHandle_Keys_List).Methods(http.MethodGet)
+	apis.HandleFunc("/keys", o.apiHandle_Keys_Delete).Methods(http.MethodDelete)
+	apis.HandleFunc("/keys/sign", o.apiHandle_Keys_Sign).Methods(http.MethodPost)
+
+	apis.HandleFunc("/p2p/peers", o.apiHandle_P2P_Peers).Methods(http.MethodGet)
+
+	apis.HandleFunc("/otter/providers", o.apiHandle_Otter_Providers).Methods(http.MethodGet)
 
 	o.apiRouter = r
 	return nil
@@ -75,11 +87,76 @@ func apiJSONErrorWithStatus(w http.ResponseWriter, err error, code int) {
 	json.NewEncoder(w).Encode(v1api.ErrorResponse{Error: err.Error()})
 }
 
-func (o *Otter) apiHandle_Version(w http.ResponseWriter, r *http.Request) {
+func (o *Otter) apiJSONResponse(w http.ResponseWriter, body any) {
 	w.Header().Add("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v1api.Version{
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		o.logger.Error("sending api response", zap.Error(err))
+	}
+}
+
+func (o *Otter) apiHandle_Version(w http.ResponseWriter, r *http.Request) {
+	o.apiJSONResponse(w, v1api.Version{
 		Version:    version.Version(),
 		CommitHash: version.FullVersion(),
 		BuildTime:  version.BuildTime(),
 	})
+}
+
+func (o *Otter) setupPOISGW(ctx context.Context) error {
+	if err := o.initPOISRouter(); err != nil {
+		return fmt.Errorf("initing API router: %w", err)
+	}
+
+	listenAddrs := o.GetConfigAs([]string{}, config.POIS_ListenAddrs).([]string)
+	useTLS := o.GetConfigAs(true, config.POIS_EnableTLS).(bool)
+
+	for _, addr := range listenAddrs {
+		ma, err := multiaddr.NewMultiaddr(addr)
+		if err != nil {
+			return fmt.Errorf("parsing multiaddr: %w", err)
+		}
+
+		lis, err := manet.Listen(ma)
+		if err != nil {
+			return fmt.Errorf("adding manet listener: %w", err)
+		}
+
+		netLis := manet.NetListener(lis)
+
+		if useTLS {
+			netLis = tls.NewListener(netLis, &tls.Config{
+				NextProtos: []string{"h2", "http/1.1"},
+			})
+		}
+
+		go http.Serve(netLis, http.HandlerFunc(o.poisRouter.ServeHTTP))
+
+		o.logger.Debug("POIS gw listening", zap.Any("addr", ma.String()))
+
+		go func() {
+			<-ctx.Done()
+			if err := lis.Close(); err != nil {
+				o.logger.Error("closing POIS gw listener", zap.Error(err))
+			}
+		}()
+	}
+
+	return nil
+}
+
+func (o *Otter) initPOISRouter() error {
+	r := mux.NewRouter()
+
+	r.HandleFunc("/version", o.apiHandle_Version)
+
+	o.poisRouter = r
+	return nil
+}
+
+func (o *Otter) RegisterPOISHandler(rr func(r *mux.Route)) {
+	rr(o.poisRouter.NewRoute())
+}
+
+func (o *Otter) RegisterPOISHandlers(rr func(r *mux.Router)) {
+	rr(o.poisRouter)
 }

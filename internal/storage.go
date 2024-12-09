@@ -20,6 +20,9 @@ const (
 	systemKeyPrefix  = "/system/"
 	publicKeyPrefix  = "/account/public/"
 	privateKeyPrefix = "/account/private/"
+
+	systemPrefix_Keys = "keys/"
+	systemPrefix_Pass = "pass/"
 )
 
 // NewDiskDatastoreStorage instatiates a Badger3 datastore for perminant on-disk

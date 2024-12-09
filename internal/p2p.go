@@ -2,12 +2,21 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
+	"github.com/tcfw/otter/internal/version"
+	v1api "github.com/tcfw/otter/pkg/api"
+	"github.com/tcfw/otter/pkg/config"
+	"github.com/tcfw/otter/pkg/id"
+	"github.com/tcfw/otter/pkg/ipns"
+
 	"github.com/cenkalti/backoff/v4"
-	"github.com/ipfs/boxo/ipns"
+	libp2pIPNS "github.com/ipfs/boxo/ipns"
 	"github.com/ipfs/go-datastore"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -23,8 +32,6 @@ import (
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
-	"github.com/tcfw/otter/internal/version"
-	"github.com/tcfw/otter/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -147,7 +154,7 @@ func (o *Otter) stopP2P() error {
 func newDHT(ctx context.Context, h host.Host, ds datastore.Batching) (*dualdht.DHT, error) {
 	dhtOpts := []dualdht.Option{
 		dualdht.DHTOption(dht.NamespacedValidator("pk", record.PublicKeyValidator{})),
-		dualdht.DHTOption(dht.NamespacedValidator("ipns", ipns.Validator{KeyBook: h.Peerstore()})),
+		dualdht.DHTOption(dht.NamespacedValidator("ipns", libp2pIPNS.Validator{KeyBook: h.Peerstore()})),
 		dualdht.DHTOption(dht.Concurrency(10)),
 		dualdht.DHTOption(dht.Mode(dht.ModeAuto)),
 	}
@@ -203,6 +210,56 @@ func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 		fmt.Print(err)
 		return
 	}
+}
+
+func (o *Otter) ResolveOtterNodesForKey(ctx context.Context, pubk id.PublicID) ([]peer.ID, error) {
+	p, err := pubk.AsLibP2P()
+	if err != nil {
+		return nil, fmt.Errorf("converting key: %w", err)
+	}
+
+	pid, err := peer.IDFromPublicKey(p)
+	if err != nil {
+		return nil, fmt.Errorf("getting id from pub key: %w", err)
+	}
+
+	ns := ipns.NameFromPeer(pid)
+	rk := ns.RoutingKey()
+
+	resCh, err := o.dht.SearchValue(ctx, string(rk))
+	if err != nil {
+		return nil, fmt.Errorf("getting DHT value: %w", err)
+	}
+
+	res := <-resCh
+
+	rec, err := ipns.UnmarshalRecord(res)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshalling DHT value: %w", err)
+	}
+
+	if err := ipns.Validate(rec, p); err != nil {
+		return nil, fmt.Errorf("validating IPNS record: %w", err)
+	}
+
+	return rec.OtterNodes()
+}
+
+func (o *Otter) apiHandle_Otter_Providers(w http.ResponseWriter, r *http.Request) {
+	rawPublicID := r.URL.Query().Get("publicID")
+
+	if rawPublicID == "" {
+		apiJSONErrorWithStatus(w, errors.New("publicID required"), http.StatusBadRequest)
+		return
+	}
+
+	nodes, err := o.ResolveOtterNodesForKey(r.Context(), id.PublicID(rawPublicID))
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	json.NewEncoder(w).Encode(nodes)
 }
 
 func (o *Otter) dhtPeerSource(ctx context.Context, num int) <-chan peer.AddrInfo {
@@ -286,6 +343,33 @@ func parseBootstrapPeers(addrs []string) ([]peer.AddrInfo, error) {
 	return peer.AddrInfosFromP2pAddrs(maddrs...)
 }
 
+func (o *Otter) apiHandle_P2P_Peers(w http.ResponseWriter, r *http.Request) {
+	ps := o.p2p.Network().Peerstore()
+
+	resp := &v1api.PeerListResponse{}
+
+	for _, peer := range o.p2p.Network().Peers() {
+		pi := ps.PeerInfo(peer)
+		if len(pi.Addrs) == 0 {
+			continue
+		}
+
+		protos, err := ps.GetProtocols(peer)
+		if err != nil {
+			continue
+		}
+
+		resp.Peers = append(resp.Peers, v1api.PeerListResponse_PeerInfo{
+			ID:        peer,
+			Addrs:     pi.Addrs,
+			Protocols: protos,
+			Latency:   ps.LatencyEWMA(peer).String(),
+		})
+	}
+
+	o.apiJSONResponse(w, resp)
+}
+
 func (o *Otter) setupMdns() error {
 	n := &mDNSNotifee{o}
 
@@ -305,7 +389,7 @@ type mDNSNotifee struct {
 }
 
 func (m *mDNSNotifee) HandlePeerFound(peer peer.AddrInfo) {
-	m.o.logger.Debug("found mDNS peer", zap.Any("peer", peer.String()))
+	m.o.logger.Debug("found mDNS peer", zap.Any("peer", peer.ID.String()))
 
 	ctx, cancel := context.WithTimeout(m.o.ctx, 10*time.Second)
 	defer cancel()

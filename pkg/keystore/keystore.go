@@ -1,6 +1,11 @@
 package keystore
 
+import (
+	"context"
+
+	"github.com/tcfw/otter/pkg/id"
+)
+
 type KeyStore interface {
-	Unlock() error
-	Lock() error
+	Keys(context.Context) ([]id.PublicID, error)
 }

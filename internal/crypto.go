@@ -17,6 +17,7 @@ import (
 	v1api "github.com/tcfw/otter/pkg/api"
 	"github.com/tcfw/otter/pkg/config"
 	"github.com/tcfw/otter/pkg/id"
+	"github.com/tcfw/otter/pkg/keystore"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/sha3"
@@ -93,6 +94,56 @@ func (o *Otter) DiskKey() ([]byte, error) {
 	}
 
 	return k, nil
+}
+
+func (o *Otter) KeyStore() keystore.KeyStore { return o }
+
+func (o *Otter) Keys(ctx context.Context) ([]id.PublicID, error) {
+	ss, err := o.sc.System()
+	if err != nil {
+		return nil, err
+	}
+
+	q, err := ss.Query(ctx, query.Query{Prefix: systemPrefix_Keys, KeysOnly: true})
+	if err != nil {
+		return nil, err
+	}
+
+	keys, err := q.Rest()
+	if err != nil {
+		return nil, err
+	}
+
+	fkeys := []id.PublicID{}
+	for _, k := range keys {
+		fkeys = append(fkeys, id.PublicID(strings.TrimPrefix(k.Key, systemPrefix_Keys)))
+	}
+
+	return fkeys, nil
+}
+
+func (o *Otter) privateKeys(ctx context.Context) ([]id.PrivateKey, error) {
+	ss, err := o.sc.System()
+	if err != nil {
+		return nil, err
+	}
+
+	q, err := ss.Query(ctx, query.Query{Prefix: systemPrefix_Keys})
+	if err != nil {
+		return nil, err
+	}
+
+	keys, err := q.Rest()
+	if err != nil {
+		return nil, err
+	}
+
+	fkeys := []id.PrivateKey{}
+	for _, k := range keys {
+		fkeys = append(fkeys, id.PrivateKey(strings.TrimPrefix(string(k.Value), systemPrefix_Keys)))
+	}
+
+	return fkeys, nil
 }
 
 // newDEK constructs a new Data Encryption Key (DEK)
@@ -187,13 +238,23 @@ func (o *Otter) apiHandle_Keys_NewKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ss.Put(r.Context(), "/keys/"+string(pub), []byte(priv)); err != nil {
+	if err := ss.Put(r.Context(), systemPrefix_Keys+string(pub), []byte(priv)); err != nil {
 		apiJSONError(w, err)
 		return
 	}
 
-	w.Header().Add("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v1api.NewKeyResponse{
+	h, err := hashPassword(req.Password)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	if err := ss.Put(r.Context(), systemPrefix_Pass+string(pub), []byte(h)); err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	o.apiJSONResponse(w, v1api.NewKeyResponse{
 		Mnemonic: mn,
 		PublicID: pub,
 	})
@@ -206,7 +267,7 @@ func (o *Otter) apiHandle_Keys_List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q, err := ss.Query(r.Context(), query.Query{Prefix: "keys/", KeysOnly: true})
+	q, err := ss.Query(r.Context(), query.Query{Prefix: systemPrefix_Keys, KeysOnly: true})
 	if err != nil {
 		apiJSONError(w, err)
 		return
@@ -222,10 +283,10 @@ func (o *Otter) apiHandle_Keys_List(w http.ResponseWriter, r *http.Request) {
 		Keys: []id.PublicID{},
 	}
 	for _, k := range keys {
-		resp.Keys = append(resp.Keys, id.PublicID(strings.TrimPrefix(k.Key, "keys/")))
+		resp.Keys = append(resp.Keys, id.PublicID(strings.TrimPrefix(k.Key, systemPrefix_Keys)))
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	o.apiJSONResponse(w, resp)
 }
 
 func (o *Otter) apiHandle_Keys_Delete(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +308,7 @@ func (o *Otter) apiHandle_Keys_Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keyRef := "keys/" + string(req.PublicID)
+	keyRef := systemPrefix_Keys + string(req.PublicID)
 
 	ok, err := ss.Has(r.Context(), keyRef)
 	if err != nil {
@@ -289,7 +350,7 @@ func (o *Otter) apiHandle_Keys_Sign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keyRef := "keys/" + string(req.PublicID)
+	keyRef := systemPrefix_Keys + string(req.PublicID)
 
 	ok, err := ss.Has(r.Context(), keyRef)
 	if err != nil {
@@ -313,5 +374,5 @@ func (o *Otter) apiHandle_Keys_Sign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(v1api.SignResponse{Sig: sig})
+	o.apiJSONResponse(w, v1api.SignResponse{Sig: sig})
 }

@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package activitypub;
+
+option go_package = "github.com/tcfw/pkg/protos/activitypub/pb";
+
+enum RequestType {
+	PROFILE = 0;
+	READ_COLLECTION = 1;
+}
+
+enum Collection {
+	INBOX = 0;
+	OUTBOX = 1;
+	FOLLOWERS = 2;
+	FOLLOWING = 3;
+	LIKED = 4;
+}
+
+message HTTPSignature {
+	//RFC 9421
+
+	string signature = 1;
+	string input = 2;
+	string contentDigest = 3;
+}
+
+message Request {
+	RequestType type = 1;
+	Collection collection = 2;
+	HTTPSignature httpSignature = 3;
+	string forwarded = 4; //RFC 7239
+}
+
+message Response {
+	string error = 1;
+	string jsonLD = 2;
+}

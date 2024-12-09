@@ -3,6 +3,7 @@ package internal
 import (
 	"github.com/tcfw/otter/pkg/otter"
 	"github.com/tcfw/otter/pkg/plugins"
+	"github.com/tcfw/otter/pkg/protos/activitypub"
 	"github.com/tcfw/otter/pkg/protos/filedrop"
 	"go.uber.org/zap"
 )
@@ -10,6 +11,7 @@ import (
 var (
 	builtins = []plugins.Plugin{
 		&BuildinPlugin{NameF: "filedrop", StartF: func(o otter.Otter) error { filedrop.Register(o); return nil }, ClientF: func() any { return filedrop.Client() }},
+		&BuildinPlugin{NameF: "activitypub", StartF: func(o otter.Otter) error { activitypub.Register(o); return nil }}, //ClientF: func() any { return activitypub.Client() }},
 	}
 )
 

@@ -14,4 +14,9 @@ const (
 	P2P_NAT            ConfigKey = "p2p.nat"
 
 	Plugins_LoadDir ConfigKey = "plugins.loadDir"
+
+	POIS_ListenAddrs    ConfigKey = "pois.listenAddrs"
+	POIS_EnableTLS      ConfigKey = "pois.enableTLS"
+	POIS_TLSCertificate ConfigKey = "pois.tlsCertificate"
+	POIS_TLSKey         ConfigKey = "pois.tlsKey"
 )
