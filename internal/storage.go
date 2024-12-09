@@ -60,17 +60,17 @@ type StorageClasses struct {
 
 // Public provides a storage class for a given public key
 // No values or keys are encrypted and objects are assumed to *not* be globally shareable
-func (sc *StorageClasses) System() (*NamespacedStorage, error) {
+func (sc *StorageClasses) System() (datastore.Datastore, error) {
 	return &NamespacedStorage{
 		Datastore: sc.o.ds,
 		logger:    sc.o.logger.Named("system_storage"),
-		ns:        systemKeyPrefix,
+		ns:        datastore.NewKey(systemKeyPrefix),
 	}, nil
 }
 
 // Public provides a storage class for a given public key
 // No values or keys are encrypted and objects are assumed to be globally shareable
-func (sc *StorageClasses) Public(pub id.PublicID) (*NamespacedStorage, error) {
+func (sc *StorageClasses) Public(pub id.PublicID) (datastore.Datastore, error) {
 	syncer, err := sc.o.GetOrNewAccountSyncer(sc.o.ctx, pub)
 	if err != nil {
 		return nil, fmt.Errorf("getting account syncer: %w", err)
@@ -79,7 +79,7 @@ func (sc *StorageClasses) Public(pub id.PublicID) (*NamespacedStorage, error) {
 	return &NamespacedStorage{
 		Datastore: syncer.publicSyncer,
 		logger:    sc.o.logger.Named("public_storage"),
-		ns:        publicKeyPrefix + string(pub),
+		ns:        datastore.NewKey(publicKeyPrefix + string(pub)),
 	}, nil
 }
 
@@ -88,7 +88,7 @@ func (sc *StorageClasses) Public(pub id.PublicID) (*NamespacedStorage, error) {
 // Keys are not encrypted
 //
 // Values are assumed to be shareable once sealed
-func (sc *StorageClasses) Private(pk id.PrivateKey) (*NamespacedStorage, error) {
+func (sc *StorageClasses) Private(pk id.PrivateKey) (datastore.Datastore, error) {
 	pubk, err := pk.PublicKey()
 	if err != nil {
 		return nil, fmt.Errorf("getting public key: %w", err)
@@ -114,7 +114,7 @@ func (sc *StorageClasses) Private(pk id.PrivateKey) (*NamespacedStorage, error) 
 	ns := &NamespacedStorage{
 		Datastore: syncer.privateSyncer,
 		logger:    sc.o.logger.Named("private_storage"),
-		ns:        privateKeyPrefix + string(pubk),
+		ns:        datastore.NewKey(privateKeyPrefix + string(pubk)),
 		seal:      privateStorageSeal(aead, ad),
 		unseal:    privateStorageUnseal(aead, ad),
 	}
@@ -125,7 +125,7 @@ func (sc *StorageClasses) Private(pk id.PrivateKey) (*NamespacedStorage, error) 
 // NamespacedStorage provides namespaced and/or encryption functions for a datastore
 type NamespacedStorage struct {
 	datastore.Datastore
-	ns     string
+	ns     datastore.Key
 	logger *zap.Logger
 
 	seal   cryptoSealUnSeal
@@ -133,13 +133,13 @@ type NamespacedStorage struct {
 }
 
 // formatKey wraps the key with the storage class namespace
-func (nss *NamespacedStorage) formatKey(k string) datastore.Key {
-	return datastore.KeyWithNamespaces([]string{nss.ns, k})
+func (nss *NamespacedStorage) formatKey(k datastore.Key) datastore.Key {
+	return nss.ns.Child(k)
 }
 
 // Get retreives a value for the given value from the datastore
 // unsealing the value if configured
-func (nss *NamespacedStorage) Get(ctx context.Context, k string) ([]byte, error) {
+func (nss *NamespacedStorage) Get(ctx context.Context, k datastore.Key) ([]byte, error) {
 	val, err := nss.Datastore.Get(ctx, nss.formatKey(k))
 	if err != nil {
 		return nil, err
@@ -157,13 +157,13 @@ func (nss *NamespacedStorage) Get(ctx context.Context, k string) ([]byte, error)
 }
 
 // Has returns whether the `key` is mapped to a `value`.
-func (nss *NamespacedStorage) Has(ctx context.Context, k string) (bool, error) {
+func (nss *NamespacedStorage) Has(ctx context.Context, k datastore.Key) (bool, error) {
 	return nss.Datastore.Has(ctx, nss.formatKey(k))
 }
 
 // Put adds a key/value to the datastore
 // sealing the value if configured
-func (nss *NamespacedStorage) Put(ctx context.Context, k string, val []byte) error {
+func (nss *NamespacedStorage) Put(ctx context.Context, k datastore.Key, val []byte) error {
 	if nss.seal != nil {
 		sealedVal, err := nss.seal(ctx, val)
 		if err != nil {
@@ -177,7 +177,7 @@ func (nss *NamespacedStorage) Put(ctx context.Context, k string, val []byte) err
 
 // Search finds keys in the datastore with the prefix
 func (nss *NamespacedStorage) Query(ctx context.Context, q query.Query) (query.Results, error) {
-	q.Prefix = nss.formatKey(q.Prefix).String()
+	q.Prefix = nss.formatKey(datastore.NewKey(q.Prefix)).String()
 
 	r, err := nss.Datastore.Query(ctx, q)
 	if err != nil {
@@ -192,7 +192,7 @@ func (nss *NamespacedStorage) Close() error {
 }
 
 // Delete removes the given key from the datastore
-func (nss *NamespacedStorage) Delete(ctx context.Context, k string) error {
+func (nss *NamespacedStorage) Delete(ctx context.Context, k datastore.Key) error {
 	return nss.Datastore.Delete(ctx, nss.formatKey(k))
 }
 
@@ -222,7 +222,7 @@ func (nsr *NamespacedQueryResults) Next() <-chan query.Result {
 					r.Value = v
 				}
 			}
-			r.Key = strings.TrimPrefix(r.Key, nsr.nss.ns)
+			r.Key = strings.TrimPrefix(r.Key, nsr.nss.ns.String())
 			ch <- r
 		}
 	}()
@@ -243,7 +243,7 @@ func (nsr *NamespacedQueryResults) NextSync() (query.Result, bool) {
 		}
 	}
 
-	val.Key = strings.TrimPrefix(val.Key, nsr.nss.ns)
+	val.Key = strings.TrimPrefix(val.Key, nsr.nss.ns.String())
 
 	return val, ok
 }
@@ -260,7 +260,7 @@ func (nsr *NamespacedQueryResults) Rest() ([]query.Entry, error) {
 			r.Value = v
 		}
 
-		r.Key = strings.TrimPrefix(r.Key, nsr.nss.ns)
+		r.Key = strings.TrimPrefix(r.Key, nsr.nss.ns.String())
 		es = append(es, r.Entry)
 	}
 

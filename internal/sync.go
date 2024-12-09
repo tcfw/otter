@@ -79,7 +79,7 @@ func (o *Otter) getAllowedSyncerPeers(ctx context.Context, pubk id.PublicID) ([]
 		return nil, fmt.Errorf("getting account public store: %w", err)
 	}
 
-	rawPeerList, err := sc.Get(ctx, "storagePeers")
+	rawPeerList, err := sc.Get(ctx, datastore.NewKey("storagePeers"))
 	if err != nil {
 		return nil, fmt.Errorf("getting storage peer allow list: %w", err)
 	}

@@ -26,10 +26,11 @@ message HTTPSignature {
 }
 
 message Request {
-	RequestType type = 1;
-	Collection collection = 2;
-	HTTPSignature httpSignature = 3;
-	string forwarded = 4; //RFC 7239
+	string publicID = 1;
+	RequestType type = 2;
+	Collection collection =3;
+	HTTPSignature httpSignature = 4;
+	string forwarded = 5; //RFC 7239
 }
 
 message Response {

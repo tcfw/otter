@@ -16,6 +16,7 @@ import (
 	"github.com/ipfs/boxo/ipld/merkledag"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
+	"github.com/ipfs/go-datastore"
 	"github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -48,6 +49,12 @@ const (
 
 	requestMaxSize  = 8 * 1024
 	responseMaxSize = 1 << 20
+
+	poisPathInbox     = "inbox"
+	poisPathOutbox    = "outbox"
+	poisPathFollowers = "followers"
+	poisPathFollowing = "following"
+	poisPathLiked     = "liked"
 )
 
 var (
@@ -61,7 +68,7 @@ func Register(o otter.Otter) {
 
 	o.Protocols().RegisterPOISHandlers(func(r *mux.Router) {
 		sr := r.PathPrefix(poisPrefix + "{handle}").Subrouter()
-		sr.HandleFunc("/profile", aph.poisProfile).Methods(http.MethodGet)
+		sr.HandleFunc("/", aph.poisProfile).Methods(http.MethodGet)
 		sr.HandleFunc("/inbox", aph.poisInbox).Methods(http.MethodPost)
 		sr.HandleFunc("/outbox", aph.poisOutbox).Methods(http.MethodGet)
 		sr.HandleFunc("/followers", aph.poisFollowers).Methods(http.MethodGet)
@@ -103,11 +110,10 @@ func (a *ActivityPubHandler) p2pHandle(s network.Stream) {
 	}
 	defer s.Scope().ReleaseMemory(requestMaxSize)
 
-	req := &pb.Request{}
-
 	r := pbio.NewDelimitedReader(s, requestMaxSize)
 	w := pbio.NewDelimitedWriter(s)
 
+	req := &pb.Request{}
 	if err := r.ReadMsg(req); err != nil {
 		a.logger.Error("reading msg for activitypub stream", zap.Error(err))
 		s.Reset()
@@ -130,7 +136,70 @@ func (a *ActivityPubHandler) p2pHandle(s network.Stream) {
 func (a *ActivityPubHandler) handleRequest(r *pb.Request) (*pb.Response, error) {
 	a.logger.Info("req", zap.Any("req", r))
 
-	return nil, fmt.Errorf("not implemented")
+	if r.PublicID == "" {
+		return nil, fmt.Errorf("no public ID supplied in request")
+	}
+
+	switch r.Type {
+	case pb.RequestType_PROFILE:
+		return a.handleProfile(r)
+	default:
+		return &pb.Response{Error: "unknown request type"}, nil
+	}
+}
+
+func (a *ActivityPubHandler) handleProfile(r *pb.Request) (*pb.Response, error) {
+	actor, err := a.localActor(context.Background(), id.PublicID(r.PublicID))
+	if err != nil {
+		return nil, fmt.Errorf("generating actor")
+	}
+
+	jld, err := json.Marshal(actor)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling actor")
+	}
+
+	return &pb.Response{JsonLD: string(jld)}, nil
+}
+
+func (a *ActivityPubHandler) localActor(ctx context.Context, pub id.PublicID) (*Actor, error) {
+	ps, err := a.o.Storage().Public(pub)
+	if err != nil {
+		return nil, err
+	}
+
+	bURL := a.baseURL(pub)
+
+	actor := &Actor{
+		Object: Object{
+			JSONLD: JSONLD{
+				Context: []string{"https://www.w3.org/ns/activitystreams"},
+				Type:    "Person",
+			},
+		},
+		Id:        string(pub),
+		Inbox:     bURL + poisPathInbox,
+		Outbox:    bURL + poisPathOutbox,
+		Followers: bURL + poisPathFollowers,
+		Following: bURL + poisPathFollowing,
+		Liked:     bURL + poisPathLiked,
+	}
+
+	pu, err := ps.Get(ctx, datastore.NewKey("prefUsername"))
+	if err == nil && len(pu) != 0 {
+		actor.PreferredUsername = string(pu)
+	}
+
+	return actor, nil
+}
+
+func (a *ActivityPubHandler) baseURL(pub id.PublicID) string {
+	directoryLink := url.URL{}
+	directoryLink.Scheme = "https"
+	directoryLink.Host = poisGateway
+	directoryLink.Path = poisPrefix + string(pub) + "/"
+	dURL := directoryLink.String()
+	return dURL
 }
 
 func (a *ActivityPubHandler) doPublishWebFingers() {
@@ -151,11 +220,7 @@ func (a *ActivityPubHandler) doPublishWebFingers() {
 }
 
 func (a *ActivityPubHandler) doPublishWebFinger(ctx context.Context, key id.PublicID) error {
-	directoryLink := url.URL{}
-	directoryLink.Scheme = "https"
-	directoryLink.Host = poisGateway
-	directoryLink.Path = poisPrefix + string(key) + "/"
-	dURL := directoryLink.String()
+	dURL := a.baseURL(key)
 
 	finger := &WebFingerJRD{
 		Aliases: []string{dURL},
@@ -432,7 +497,8 @@ func (a *ActivityPubHandler) poisProfile(w http.ResponseWriter, r *http.Request)
 	}
 
 	req := &pb.Request{
-		Type: pb.RequestType_PROFILE,
+		PublicID: handle,
+		Type:     pb.RequestType_PROFILE,
 		HttpSignature: &pb.HTTPSignature{
 			Signature:     r.Header.Get("Signature"),
 			Input:         r.Header.Get("Signature-Input"),
@@ -452,6 +518,7 @@ func (a *ActivityPubHandler) poisProfile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	w.Header().Add("Content-Type", "application/json+ld")
 	w.Write([]byte(resp.JsonLD))
 }
 

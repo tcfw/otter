@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/query"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/tcfw/otter/internal/kek"
@@ -238,7 +239,7 @@ func (o *Otter) apiHandle_Keys_NewKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ss.Put(r.Context(), systemPrefix_Keys+string(pub), []byte(priv)); err != nil {
+	if err := ss.Put(r.Context(), datastore.NewKey(systemPrefix_Keys+string(pub)), []byte(priv)); err != nil {
 		apiJSONError(w, err)
 		return
 	}
@@ -249,7 +250,7 @@ func (o *Otter) apiHandle_Keys_NewKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ss.Put(r.Context(), systemPrefix_Pass+string(pub), []byte(h)); err != nil {
+	if err := ss.Put(r.Context(), datastore.NewKey(systemPrefix_Pass+string(pub)), []byte(h)); err != nil {
 		apiJSONError(w, err)
 		return
 	}
@@ -310,7 +311,7 @@ func (o *Otter) apiHandle_Keys_Delete(w http.ResponseWriter, r *http.Request) {
 
 	keyRef := systemPrefix_Keys + string(req.PublicID)
 
-	ok, err := ss.Has(r.Context(), keyRef)
+	ok, err := ss.Has(r.Context(), datastore.NewKey(keyRef))
 	if err != nil {
 		apiJSONError(w, err)
 		return
@@ -320,7 +321,7 @@ func (o *Otter) apiHandle_Keys_Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ss.Delete(r.Context(), keyRef); err != nil {
+	if err := ss.Delete(r.Context(), datastore.NewKey(keyRef)); err != nil {
 		apiJSONError(w, err)
 		return
 	}
@@ -352,7 +353,7 @@ func (o *Otter) apiHandle_Keys_Sign(w http.ResponseWriter, r *http.Request) {
 
 	keyRef := systemPrefix_Keys + string(req.PublicID)
 
-	ok, err := ss.Has(r.Context(), keyRef)
+	ok, err := ss.Has(r.Context(), datastore.NewKey(keyRef))
 	if err != nil {
 		apiJSONError(w, err)
 		return
@@ -362,7 +363,7 @@ func (o *Otter) apiHandle_Keys_Sign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rpk, err := ss.Get(r.Context(), keyRef)
+	rpk, err := ss.Get(r.Context(), datastore.NewKey(keyRef))
 	if err != nil {
 		apiJSONError(w, err)
 		return

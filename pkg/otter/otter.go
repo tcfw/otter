@@ -7,6 +7,7 @@ import (
 	"github.com/tcfw/otter/pkg/keystore"
 
 	"github.com/gorilla/mux"
+	"github.com/ipfs/go-datastore"
 	ipld "github.com/ipfs/go-ipld-format"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -22,7 +23,7 @@ type Otter interface {
 	// Settings()
 	Logger(component string) *zap.Logger
 	UI() UI
-
+	Storage() StorageClasses
 	HostID() peer.ID
 	IPLD() ipld.DAGService
 
@@ -32,14 +33,14 @@ type Otter interface {
 type Storage interface {
 	Get(ctx context.Context, k string) ([]byte, error)
 	Put(ctx context.Context, k string, v []byte) error
-	Search(ctx context.Context, prefix string) (<-chan []byte, error)
+	// Search(ctx context.Context, prefix string) (<-chan []byte, error)
 	Delete(ctx context.Context, k string) error
 }
 
 type StorageClasses interface {
-	Public(pub id.PublicID) (Storage, error)
-	Private(pk id.PrivateKey) (Storage, error)
-	System() (Storage, error)
+	Public(pub id.PublicID) (datastore.Datastore, error)
+	Private(pk id.PrivateKey) (datastore.Datastore, error)
+	System() (datastore.Datastore, error)
 }
 
 type Protocols interface {

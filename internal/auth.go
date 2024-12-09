@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/ipfs/go-datastore"
 	v1api "github.com/tcfw/otter/pkg/api"
 	"github.com/tcfw/otter/pkg/id"
 
@@ -85,7 +86,7 @@ func (o *Otter) validateAuthToken(ctx context.Context, token string) error {
 			return nil, fmt.Errorf("invalid KID")
 		}
 
-		rawKey, err := ss.Get(ctx, systemPrefix_Keys+kid)
+		rawKey, err := ss.Get(ctx, datastore.NewKey(systemPrefix_Keys+kid))
 		if err != nil {
 			return "", fmt.Errorf("getting key for KID: %w", err)
 		}
@@ -116,7 +117,7 @@ func (o *Otter) newAuthToken(ctx context.Context, publicID id.PublicID, password
 		return "", fmt.Errorf("getting system storage: %w", err)
 	}
 
-	passHash, err := ss.Get(ctx, systemPrefix_Pass+string(publicID))
+	passHash, err := ss.Get(ctx, datastore.NewKey(systemPrefix_Pass+string(publicID)))
 	if err != nil {
 		return "", fmt.Errorf("getting pass for publicID: %w", err)
 	}
@@ -125,7 +126,7 @@ func (o *Otter) newAuthToken(ctx context.Context, publicID id.PublicID, password
 		return "", err
 	}
 
-	rawKey, err := ss.Get(ctx, systemPrefix_Keys+string(publicID))
+	rawKey, err := ss.Get(ctx, datastore.NewKey(systemPrefix_Keys+string(publicID)))
 	if err != nil {
 		return "", fmt.Errorf("getting key for publicID: %w", err)
 	}

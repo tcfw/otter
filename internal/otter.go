@@ -56,7 +56,7 @@ func (o *Otter) Crypto() otter.Cryptography     { return o }
 func (o *Otter) Protocols() otter.Protocols     { return o }
 func (o *Otter) Logger(comp string) *zap.Logger { return o.logger.Named(comp) }
 func (o *Otter) UI() otter.UI                   { return o.ui }
-func (o *Otter) Storage() *StorageClasses       { return o.sc }
+func (o *Otter) Storage() otter.StorageClasses  { return o.sc }
 func (o *Otter) IPLD() ipld.DAGService          { return o.ipld }
 
 func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
