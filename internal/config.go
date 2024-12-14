@@ -27,8 +27,8 @@ var (
 			"/ip6/::1/tcp/9697",
 		},
 		config.POIS_ListenAddrs: []string{
-			"/ip4/0.0.0.0/tcp/9698",
-			"/ip6/::/tcp/9698",
+			"/ip4/0.0.0.0/tcp/443",
+			"/ip6/::/tcp/443",
 		},
 		config.POIS_EnableTLS: false,
 	}

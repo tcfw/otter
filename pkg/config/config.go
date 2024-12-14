@@ -16,7 +16,7 @@ const (
 	Plugins_LoadDir ConfigKey = "plugins.loadDir"
 
 	POIS_ListenAddrs    ConfigKey = "pois.listenAddrs"
-	POIS_EnableTLS      ConfigKey = "pois.enableTLS"
+	POIS_EnableTLS      ConfigKey = "pois.enableAutoTLS"
 	POIS_TLSCertificate ConfigKey = "pois.tlsCertificate"
 	POIS_TLSKey         ConfigKey = "pois.tlsKey"
 )

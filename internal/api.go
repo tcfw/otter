@@ -9,6 +9,8 @@ import (
 
 	"github.com/tcfw/otter/internal/version"
 	v1api "github.com/tcfw/otter/pkg/api"
+	"golang.org/x/crypto/acme"
+	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/gorilla/mux"
 	"github.com/multiformats/go-multiaddr"
@@ -18,7 +20,8 @@ import (
 )
 
 func (o *Otter) setupAPI(ctx context.Context) error {
-	if err := o.initAPIRouter(); err != nil {
+	r, err := o.initAPIRouter()
+	if err != nil {
 		return fmt.Errorf("initing API router: %w", err)
 	}
 
@@ -38,7 +41,7 @@ func (o *Otter) setupAPI(ctx context.Context) error {
 			return fmt.Errorf("adding manet listener: %w", err)
 		}
 
-		go http.Serve(manet.NetListener(lis), http.HandlerFunc(o.apiRouter.ServeHTTP))
+		go http.Serve(manet.NetListener(lis), http.HandlerFunc(r.ServeHTTP))
 
 		o.logger.Debug("api listening", zap.Any("addr", ma.String()))
 
@@ -53,7 +56,7 @@ func (o *Otter) setupAPI(ctx context.Context) error {
 	return nil
 }
 
-func (o *Otter) initAPIRouter() error {
+func (o *Otter) initAPIRouter() (*mux.Router, error) {
 	r := mux.NewRouter()
 
 	r.Use(o.authMiddleware)
@@ -73,8 +76,8 @@ func (o *Otter) initAPIRouter() error {
 
 	apis.HandleFunc("/otter/providers", o.apiHandle_Otter_Providers).Methods(http.MethodGet)
 
-	o.apiRouter = r
-	return nil
+	o.apiRouter = apis
+	return r, nil
 }
 
 func apiJSONError(w http.ResponseWriter, err error) {
@@ -124,8 +127,19 @@ func (o *Otter) setupPOISGW(ctx context.Context) error {
 		netLis := manet.NetListener(lis)
 
 		if useTLS {
+			autocert := &autocert.Manager{
+				Prompt: autocert.AcceptTOS,
+			}
+
 			netLis = tls.NewListener(netLis, &tls.Config{
-				NextProtos: []string{"h2", "http/1.1"},
+				NextProtos: []string{"h2", "http/1.1", acme.ALPNProto},
+				GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+					cert, err := autocert.GetCertificate(chi)
+					if err != nil {
+						o.logger.Named("autocert").Error("getting autocert", zap.Error(err))
+					}
+					return cert, err
+				},
 			})
 		}
 
@@ -147,6 +161,13 @@ func (o *Otter) setupPOISGW(ctx context.Context) error {
 func (o *Otter) initPOISRouter() error {
 	r := mux.NewRouter()
 
+	r.Use(func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			o.logger.Info("pois request", zap.Any("url", r.URL.String()))
+			h.ServeHTTP(w, r)
+		})
+	})
+
 	r.HandleFunc("/version", o.apiHandle_Version)
 
 	o.poisRouter = r
@@ -159,4 +180,12 @@ func (o *Otter) RegisterPOISHandler(rr func(r *mux.Route)) {
 
 func (o *Otter) RegisterPOISHandlers(rr func(r *mux.Router)) {
 	rr(o.poisRouter)
+}
+
+func (o *Otter) RegisterAPIHandler(rr func(r *mux.Route)) {
+	rr(o.apiRouter.NewRoute())
+}
+
+func (o *Otter) RegisterAPIHandlers(rr func(r *mux.Router)) {
+	rr(o.apiRouter)
 }

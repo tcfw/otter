@@ -5,12 +5,14 @@ import (
 	"github.com/tcfw/otter/pkg/plugins"
 	"github.com/tcfw/otter/pkg/protos/activitypub"
 	"github.com/tcfw/otter/pkg/protos/filedrop"
+	"github.com/tcfw/otter/pkg/protos/petnames"
 	"go.uber.org/zap"
 )
 
 var (
 	builtins = []plugins.Plugin{
 		&BuildinPlugin{NameF: "filedrop", StartF: func(o otter.Otter) error { filedrop.Register(o); return nil }, ClientF: func() any { return filedrop.Client() }},
+		&BuildinPlugin{NameF: "petnames", StartF: func(o otter.Otter) error { petnames.Register(o); return nil }, ClientF: func() any { return petnames.Client() }},
 		&BuildinPlugin{NameF: "activitypub", StartF: func(o otter.Otter) error { activitypub.Register(o); return nil }}, //ClientF: func() any { return activitypub.Client() }},
 	}
 )

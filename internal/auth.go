@@ -37,13 +37,14 @@ func (o *Otter) authMiddleware(next http.Handler) http.Handler {
 		}
 		bearer = strings.TrimPrefix(bearer, "Bearer ")
 
-		if err := o.validateAuthToken(r.Context(), bearer); err != nil {
+		ctx, err := o.validateAuthToken(r.Context(), bearer)
+		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte("invalid authorization token"))
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -74,17 +75,21 @@ func (o *Otter) apiHandle_OAuth_Token(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(tok))
 }
 
-func (o *Otter) validateAuthToken(ctx context.Context, token string) error {
+func (o *Otter) validateAuthToken(ctx context.Context, token string) (context.Context, error) {
 	ss, err := o.sc.System()
 	if err != nil {
-		return fmt.Errorf("getting system storage: %w", err)
+		return nil, fmt.Errorf("getting system storage: %w", err)
 	}
+
+	var pubk id.PublicID
 
 	_, err = jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
 		kid, ok := t.Header["kid"].(string)
 		if !ok || len(kid) == 0 {
 			return nil, fmt.Errorf("invalid KID")
 		}
+
+		pubk = id.PublicID(kid)
 
 		rawKey, err := ss.Get(ctx, datastore.NewKey(systemPrefix_Keys+kid))
 		if err != nil {
@@ -105,10 +110,10 @@ func (o *Otter) validateAuthToken(ctx context.Context, token string) error {
 
 	})
 	if err != nil {
-		return fmt.Errorf("validating token: %w", err)
+		return nil, fmt.Errorf("validating token: %w", err)
 	}
 
-	return nil
+	return v1api.SetAuthIDForContext(ctx, pubk), nil
 }
 
 func (o *Otter) newAuthToken(ctx context.Context, publicID id.PublicID, password string, scopes []string) (string, error) {

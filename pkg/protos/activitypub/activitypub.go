@@ -28,7 +28,9 @@ import (
 	"github.com/tcfw/otter/internal/utils"
 	"github.com/tcfw/otter/pkg/id"
 	"github.com/tcfw/otter/pkg/otter"
+	"github.com/tcfw/otter/pkg/plugins"
 	"github.com/tcfw/otter/pkg/protos/activitypub/pb"
+	"github.com/tcfw/otter/pkg/protos/petnames"
 	"go.uber.org/zap"
 
 	dnslink "github.com/dnslink-std/go"
@@ -37,8 +39,9 @@ import (
 )
 
 const (
-	protoID     protocol.ID = "/otter/activitypub/0.0.1"
-	serviceName             = "otter.activitypub"
+	protoID protocol.ID = "/otter/activitypub/0.0.1"
+
+	serviceName = "otter.activitypub"
 
 	maxResolveAttempts     = 3
 	maxHandleResolveSize   = 10240
@@ -163,11 +166,6 @@ func (a *ActivityPubHandler) handleProfile(r *pb.Request) (*pb.Response, error) 
 }
 
 func (a *ActivityPubHandler) localActor(ctx context.Context, pub id.PublicID) (*Actor, error) {
-	ps, err := a.o.Storage().Public(pub)
-	if err != nil {
-		return nil, err
-	}
-
 	bURL := a.baseURL(pub)
 
 	actor := &Actor{
@@ -185,9 +183,25 @@ func (a *ActivityPubHandler) localActor(ctx context.Context, pub id.PublicID) (*
 		Liked:     bURL + poisPathLiked,
 	}
 
+	ps, err := a.o.Storage().Public(pub)
+	if err != nil {
+		return nil, err
+	}
+
 	pu, err := ps.Get(ctx, datastore.NewKey("prefUsername"))
 	if err == nil && len(pu) != 0 {
 		actor.PreferredUsername = string(pu)
+	}
+
+	if pn := plugins.GetByName("petnames"); pn != nil {
+		pnc := pn.Client().(petnames.ClientImpl)
+		if s, err := pnc.ForPublicID(pub); s != nil && err == nil {
+			n, err := s.ProposedName()
+			if err == nil && n != "" {
+				actor.Name = &n
+			}
+		}
+	} else {
 	}
 
 	return actor, nil
@@ -441,14 +455,23 @@ func (a *ActivityPubHandler) poisResolve(w http.ResponseWriter, r *http.Request)
 	res = strings.TrimPrefix(res, "acct:")
 	res = strings.TrimPrefix(res, "@")
 
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	resParts := strings.SplitN(res, "@", 2)
+
+	if len(resParts) != 2 {
+		http.Error(w, "invalid activityPub handle format", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	var actor *WebFingerJRD
-	actor, err := a.resolveWebFinger(ctx, res)
-	if err != nil {
+	var err error
+	if r.Host != resParts[1] {
+		actor, err = a.resolveWebFinger(ctx, res)
+	}
+	if err != nil || actor == nil {
 		a.logger.Error("resolving via webfinger, trying dnslink", zap.Any("actor", res), zap.Error(err))
-
 		errCh := make(chan error, 1)
 		actorCh := make(chan *WebFingerJRD, 1)
 

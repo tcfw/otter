@@ -45,13 +45,16 @@ type StorageClasses interface {
 
 type Protocols interface {
 	P2P() host.Host
-
 	Registered() []protocol.ID
+
 	RegisterP2PHandler(protocol protocol.ID, handler network.StreamHandler)
 	UnregisterP2PHandler(protocol protocol.ID)
 
 	RegisterPOISHandler(func(r *mux.Route))
 	RegisterPOISHandlers(func(r *mux.Router))
+
+	RegisterAPIHandler(func(r *mux.Route))
+	RegisterAPIHandlers(func(r *mux.Router))
 }
 
 type Cryptography interface {

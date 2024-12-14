@@ -28,6 +28,16 @@ func LoadedPlugins() []Plugin {
 	return a
 }
 
+func GetByName(name string) Plugin {
+	for _, p := range loadedPlugins {
+		if p.Name() == name {
+			return p
+		}
+	}
+
+	return nil
+}
+
 func AddBuiltIn(p Plugin) {
 	loadedPlugins[p.Name()] = p
 }
