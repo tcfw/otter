@@ -1,4 +1,4 @@
-//go:build !(macos || darwin)
+//go:build ui && !(macos || darwin)
 
 package ui
 

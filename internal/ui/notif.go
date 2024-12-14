@@ -1,3 +1,4 @@
+//go:build ui
 package ui
 
 import (
