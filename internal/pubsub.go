@@ -76,12 +76,12 @@ func (pd *DHTPubSubDiscovery) FindPeers(ctx context.Context, ns string, opts ...
 		options.Limit = 20
 	}
 
-	pd.o.logger.Named("pubsub-dht").Debug("finding peers for pubsub topic", zap.Any("ns", ns))
-
 	cid, err := pd.getCID(ns)
 	if err != nil {
 		return nil, err
 	}
+
+	pd.o.logger.Named("pubsub-dht").Debug("finding peers for pubsub topic", zap.Any("cid", cid))
 
 	return pd.o.dht.FindProvidersAsync(ctx, cid, options.Limit), nil
 }
@@ -104,7 +104,7 @@ func (pd *DHTPubSubDiscovery) Advertise(ctx context.Context, ns string, opts ...
 		return 0, err
 	}
 
-	pd.o.logger.Named("pubsub-dht").Debug("advertised pubsub topic", zap.Any("ns", ns))
+	pd.o.logger.Named("pubsub-dht").Debug("advertised pubsub topic", zap.Any("cid", cid))
 
 	return 5 * time.Minute, nil
 }

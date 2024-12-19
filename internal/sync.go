@@ -53,6 +53,8 @@ func (s *syncer) Close() error {
 }
 
 func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
+	o.logger.Named("pubsub-filter").Info("validating peer", zap.Any("topic", topic))
+
 	if !strings.HasPrefix(topic, syncerTopicPrefix) {
 		return true
 	}
