@@ -80,7 +80,7 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 	peers, err := o.getAllowedSyncerPeers(ctx, account)
 	if err != nil {
 		o.logger.Error("getting allows syncer peers: %w", zap.Error(err))
-		return false
+		return true
 	}
 
 	if len(peers) == 0 {
@@ -149,12 +149,10 @@ func (o *Otter) GetOrNewAccountSyncer(ctx context.Context, pubk id.PublicID) (*s
 		accountSyncersMu.Lock()
 		defer accountSyncersMu.Unlock()
 
-		o.logger.Info("newing account syncer")
 		nds, err := o.newAccountSyncer(ctx, pubk)
 		if err != nil {
 			return nil, fmt.Errorf("creating new account syncer: %w", err)
 		}
-		o.logger.Info("done newing account syncer")
 
 		accountSyncers[pubk] = nds
 		return nds, nil
@@ -166,8 +164,6 @@ func (o *Otter) GetOrNewAccountSyncer(ctx context.Context, pubk id.PublicID) (*s
 func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer, error) {
 	topic := syncerTopicPrefix + string(pubk)
 
-	o.logger.Info("starting crdt pubsuber")
-
 	bs, err := crdt.NewPubSubBroadcaster(ctx, o.pubsub, topic)
 	if err != nil {
 		return nil, fmt.Errorf("creating syncer broadcaster: %w", err)
@@ -176,14 +172,10 @@ func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer
 	opts := crdt.DefaultOptions()
 	opts.Logger = o.logger.Named("crdt").Sugar()
 
-	o.logger.Info("starting crdt public")
-
 	publicSyncer, err := crdt.New(o.ds, datastore.NewKey(publicKeyPrefix+string(pubk)), o.ipld, bs, opts)
 	if err != nil {
 		return nil, fmt.Errorf("creating public syncer: %w", err)
 	}
-
-	o.logger.Info("starting crdt private")
 
 	privateSyncer, err := crdt.New(o.ds, datastore.NewKey(privateKeyPrefix+string(pubk)), o.ipld, bs, opts)
 	if err != nil {

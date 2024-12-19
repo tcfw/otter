@@ -11,7 +11,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multicodec"
 	"github.com/multiformats/go-multihash"
-	"go.uber.org/zap"
 )
 
 const (
@@ -81,8 +80,6 @@ func (pd *DHTPubSubDiscovery) FindPeers(ctx context.Context, ns string, opts ...
 		return nil, err
 	}
 
-	pd.o.logger.Named("pubsub-dht").Debug("finding peers for pubsub topic", zap.Any("cid", cid))
-
 	return pd.o.dht.FindProvidersAsync(ctx, cid, options.Limit), nil
 }
 
@@ -102,8 +99,6 @@ func (pd *DHTPubSubDiscovery) Advertise(ctx context.Context, ns string, opts ...
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-
-	pd.o.logger.Named("pubsub-dht").Debug("advertising pubsub topic", zap.Any("cid", cid))
 
 	if err := pd.o.dht.Provide(ctx, cid, true); err != nil {
 		return 0, err
