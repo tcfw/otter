@@ -32,7 +32,7 @@ var (
 
 type syncer struct {
 	ctx    context.Context
-	cancel func()
+	cancel chan struct{}
 
 	publicSyncer  *crdt.Datastore
 	privateSyncer *crdt.Datastore
@@ -47,15 +47,21 @@ func (s *syncer) Close() error {
 		return fmt.Errorf("closing private syncer: %w", err)
 	}
 
-	s.cancel()
+	close(s.cancel)
 
 	return nil
 }
 
 func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
-	o.logger.Named("pubsub-filter").Info("validating peer", zap.Any("topic", topic))
+	o.logger.Named("pubsub-filter").Debug("validating peer", zap.Any("topic", topic), zap.Any("peer", pid.String()))
 
 	if !strings.HasPrefix(topic, syncerTopicPrefix) {
+		o.logger.Named("pubsub-filter").Debug("skipping topic validation", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+		return true
+	}
+
+	if pid == o.HostID() {
+		o.logger.Named("pubsub-filter").Debug("skipping self", zap.Any("topic", topic), zap.Any("peer", pid.String()))
 		return true
 	}
 
@@ -63,6 +69,13 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	if !accountSyncersMu.TryRLock() {
+		//possibly trying to start the publisher for storage
+		o.logger.Named("pubsub-filter").Debug("skipping peer validation, account syncer is locked maybe", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+		return false
+	}
+	accountSyncersMu.RUnlock()
 
 	peers, err := o.getAllowedSyncerPeers(ctx, account)
 	if err != nil {
@@ -76,7 +89,7 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 	}
 
 	for _, peer := range peers {
-		o.logger.Named("pubsub-filter").Info("validating peer", zap.Any("remote", pid.String()), zap.Any("allowed", peer.String()))
+		o.logger.Named("pubsub-filter").Debug("validating peer", zap.Any("remote", pid.String()), zap.Any("allowed", peer.String()))
 		if peer.String() == pid.String() {
 			return true
 		}
@@ -133,13 +146,15 @@ func (o *Otter) GetOrNewAccountSyncer(ctx context.Context, pubk id.PublicID) (*s
 	accountSyncersMu.RUnlock()
 
 	if !ok {
+		accountSyncersMu.Lock()
+		defer accountSyncersMu.Unlock()
+
+		o.logger.Info("newing account syncer")
 		nds, err := o.newAccountSyncer(ctx, pubk)
 		if err != nil {
 			return nil, fmt.Errorf("creating new account syncer: %w", err)
 		}
-
-		accountSyncersMu.Lock()
-		defer accountSyncersMu.Unlock()
+		o.logger.Info("done newing account syncer")
 
 		accountSyncers[pubk] = nds
 		return nds, nil
@@ -149,51 +164,57 @@ func (o *Otter) GetOrNewAccountSyncer(ctx context.Context, pubk id.PublicID) (*s
 }
 
 func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer, error) {
-	sctx, cancel := context.WithCancel(ctx)
-
 	topic := syncerTopicPrefix + string(pubk)
 
-	bs, err := crdt.NewPubSubBroadcaster(sctx, o.pubsub, topic)
+	o.logger.Info("starting crdt pubsuber")
+
+	bs, err := crdt.NewPubSubBroadcaster(ctx, o.pubsub, topic)
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("creating syncer broadcaster: %w", err)
 	}
 
 	opts := crdt.DefaultOptions()
 	opts.Logger = o.logger.Named("crdt").Sugar()
 
+	o.logger.Info("starting crdt public")
+
 	publicSyncer, err := crdt.New(o.ds, datastore.NewKey(publicKeyPrefix+string(pubk)), o.ipld, bs, opts)
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("creating public syncer: %w", err)
 	}
 
+	o.logger.Info("starting crdt private")
+
 	privateSyncer, err := crdt.New(o.ds, datastore.NewKey(privateKeyPrefix+string(pubk)), o.ipld, bs, opts)
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("creating private syncer: %w", err)
 	}
+
+	canCh := make(chan struct{})
 
 	go func() {
 		t := time.NewTicker(syncInterval)
 
 		for {
 			select {
-			case <-sctx.Done():
+			case <-canCh:
+				t.Stop()
+				return
+			case <-ctx.Done():
 				t.Stop()
 				return
 			case <-t.C:
-				if err := publicSyncer.Sync(sctx, datastore.NewKey("/")); err != nil {
+				if err := publicSyncer.Sync(ctx, datastore.NewKey("/")); err != nil {
 					o.logger.Error("syncing public syncer", zap.Error(err))
 				}
-				if err := privateSyncer.Sync(sctx, datastore.NewKey("/")); err != nil {
+				if err := privateSyncer.Sync(ctx, datastore.NewKey("/")); err != nil {
 					o.logger.Error("syncing private syncer", zap.Error(err))
 				}
 			}
 		}
 	}()
 
-	return &syncer{sctx, cancel, publicSyncer, privateSyncer}, nil
+	return &syncer{ctx, canCh, publicSyncer, privateSyncer}, nil
 }
 
 func (o *Otter) StopAccountSyncer(ctx context.Context, pubk id.PublicID) error {

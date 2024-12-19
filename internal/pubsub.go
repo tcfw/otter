@@ -25,7 +25,7 @@ var (
 func (o *Otter) setupPubSub(ctx context.Context) error {
 	psub, err := pubsub.NewGossipSub(ctx, o.p2p,
 		pubsub.WithPeerFilter(o.pubsubChainFilter),
-		pubsub.WithDiscovery(&DHTPubSubDiscovery{o}),
+		pubsub.WithDiscovery(&DHTPubSubDiscovery{o}, pubsub.WithDiscoveryOpts(discovery.TTL(30*time.Second))),
 		pubsub.WithSeenMessagesTTL(3*time.Minute),
 	)
 	if err != nil {
@@ -100,11 +100,14 @@ func (pd *DHTPubSubDiscovery) Advertise(ctx context.Context, ns string, opts ...
 		return 0, err
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	pd.o.logger.Named("pubsub-dht").Debug("advertising pubsub topic", zap.Any("cid", cid))
+
 	if err := pd.o.dht.Provide(ctx, cid, true); err != nil {
 		return 0, err
 	}
-
-	pd.o.logger.Named("pubsub-dht").Debug("advertised pubsub topic", zap.Any("cid", cid))
 
 	return 5 * time.Minute, nil
 }
