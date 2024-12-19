@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/mux"
 	ipfslite "github.com/hsanjuan/ipfs-lite"
+	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/boxo/path"
 	"github.com/ipfs/go-datastore"
 	ipld "github.com/ipfs/go-ipld-format"
@@ -95,7 +96,8 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 		o.logger.Error("setting up mDNS discovery service: %w", zap.Error(err))
 	}
 
-	o.ipld, err = ipfslite.New(ctx, ds, nil, o.p2p, o.dht, nil)
+	blocks := blockstore.NewBlockstore(ds)
+	o.ipld, err = ipfslite.New(ctx, ds, blocks, o.p2p, o.dht, nil)
 	if err != nil {
 		return nil, fmt.Errorf("initing ipfs-lite: %w", err)
 	}
