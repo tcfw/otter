@@ -74,7 +74,8 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 	}
 
 	for _, peer := range peers {
-		if peer == pid {
+		o.logger.Named("pubsub-filter").Info("validating peer", zap.Any("remote", pid.String()), zap.Any("allowed", peer.String()))
+		if peer.String() == pid.String() {
 			return true
 		}
 	}
@@ -156,13 +157,16 @@ func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer
 		return nil, fmt.Errorf("creating syncer broadcaster: %w", err)
 	}
 
-	publicSyncer, err := crdt.New(o.ds, datastore.NewKey(publicKeyPrefix+string(pubk)), o.ipld, bs, nil)
+	opts := crdt.DefaultOptions()
+	opts.Logger = o.logger.Named("crdt").Sugar()
+
+	publicSyncer, err := crdt.New(o.ds, datastore.NewKey(publicKeyPrefix+string(pubk)), o.ipld, bs, opts)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("creating public syncer: %w", err)
 	}
 
-	privateSyncer, err := crdt.New(o.ds, datastore.NewKey(privateKeyPrefix+string(pubk)), o.ipld, bs, nil)
+	privateSyncer, err := crdt.New(o.ds, datastore.NewKey(privateKeyPrefix+string(pubk)), o.ipld, bs, opts)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("creating private syncer: %w", err)
