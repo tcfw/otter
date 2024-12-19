@@ -160,13 +160,13 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 					return
 				}
 				if rawPeerList == nil {
-					rawPeerList = []byte(`{}`)
+					rawPeerList = []byte(`[]`)
 				}
 
 				peerList := []peer.ID{}
 				if err := json.Unmarshal(rawPeerList, &peerList); err != nil {
 					o.logger.Error("decoding storage peer list", zap.Error(err))
-					return
+					continue
 				}
 				peerList = append(peerList, o.HostID())
 
