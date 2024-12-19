@@ -68,6 +68,11 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 		return false
 	}
 
+	if len(peers) == 0 {
+		//TODO(tcfw): bootstrap allowed peers somehow
+		return true
+	}
+
 	for _, peer := range peers {
 		if peer == pid {
 			return true

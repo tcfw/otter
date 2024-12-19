@@ -168,7 +168,6 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 					o.logger.Error("decoding storage peer list", zap.Error(err))
 					continue
 				}
-				peerList = append(peerList, o.HostID())
 
 				record, err := ipns.NewRecord(cpk, p, 1, time.Now().Add(ipns.DefaultRecordLifetime), ipns.DefaultRecordTTL, ipns.WithOtterNodes(peerList))
 				if err != nil {
