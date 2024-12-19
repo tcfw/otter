@@ -96,7 +96,7 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 		o.logger.Error("setting up mDNS discovery service: %w", zap.Error(err))
 	}
 
-	blocks := blockstore.NewBlockstore(ds)
+	blocks := blockstore.NewGCBlockstore(blockstore.NewBlockstore(ds), blockstore.NewGCLocker())
 	o.ipld, err = ipfslite.New(ctx, ds, blocks, o.p2p, o.dht, nil)
 	if err != nil {
 		return nil, fmt.Errorf("initing ipfs-lite: %w", err)

@@ -172,12 +172,15 @@ func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer
 	opts := crdt.DefaultOptions()
 	opts.Logger = o.logger.Named("crdt").Sugar()
 
-	publicSyncer, err := crdt.New(o.ds, datastore.NewKey(publicKeyPrefix+string(pubk)), o.ipld, bs, opts)
+	publicPrefix := datastore.NewKey(publicKeyPrefix + string(pubk))
+	privatePrefix := datastore.NewKey(privateKeyPrefix + string(pubk))
+
+	publicSyncer, err := crdt.New(o.ds, publicPrefix, o.ipld, bs, opts)
 	if err != nil {
 		return nil, fmt.Errorf("creating public syncer: %w", err)
 	}
 
-	privateSyncer, err := crdt.New(o.ds, datastore.NewKey(privateKeyPrefix+string(pubk)), o.ipld, bs, opts)
+	privateSyncer, err := crdt.New(o.ds, privatePrefix, o.ipld, bs, opts)
 	if err != nil {
 		return nil, fmt.Errorf("creating private syncer: %w", err)
 	}
@@ -196,10 +199,10 @@ func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer
 				t.Stop()
 				return
 			case <-t.C:
-				if err := publicSyncer.Sync(ctx, datastore.NewKey("/")); err != nil {
+				if err := publicSyncer.Sync(ctx, publicPrefix); err != nil {
 					o.logger.Error("syncing public syncer", zap.Error(err))
 				}
-				if err := privateSyncer.Sync(ctx, datastore.NewKey("/")); err != nil {
+				if err := privateSyncer.Sync(ctx, privatePrefix); err != nil {
 					o.logger.Error("syncing private syncer", zap.Error(err))
 				}
 			}

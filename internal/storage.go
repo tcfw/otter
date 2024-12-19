@@ -2,7 +2,9 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -50,6 +52,23 @@ func NewDiskDatastoreStorage(o *Otter) (datastore.Batching, error) {
 	}
 
 	return ds, nil
+}
+
+func (o *Otter) apiHandle_Storage_ListKeys(w http.ResponseWriter, r *http.Request) {
+	res, err := o.ds.Query(r.Context(), query.Query{KeysOnly: true})
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	keys, err := res.Rest()
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	w.Header().Add("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(keys)
 }
 
 type cryptoSealUnSeal func(ctx context.Context, b []byte) ([]byte, error)
