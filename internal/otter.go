@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -121,6 +122,12 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 			}
 
 			for _, key := range keys {
+				pubk, err := key.PublicKey()
+				if err != nil {
+					o.logger.Error("getting public key for ipns publish", zap.Error(err))
+					return
+				}
+
 				dpk, err := id.DecodeCryptoMaterial(string(key))
 				if err != nil {
 					o.logger.Error("decoding private key for ipns publish", zap.Error(err))
@@ -141,7 +148,29 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 					return
 				}
 
-				record, err := ipns.NewRecord(cpk, p, 1, time.Now().Add(ipns.DefaultRecordLifetime), ipns.DefaultRecordTTL, ipns.WithOtterNodes([]peer.ID{o.HostID()}))
+				sc, err := o.Storage().Public(pubk)
+				if err != nil {
+					o.logger.Error("getting public storage for key for ipns publish", zap.Error(err))
+					return
+				}
+
+				rawPeerList, err := sc.Get(ctx, datastore.NewKey("storagePeers"))
+				if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+					o.logger.Error("getting storage peer allow list", zap.Error(err))
+					return
+				}
+				if rawPeerList == nil {
+					rawPeerList = []byte(`{}`)
+				}
+
+				peerList := []peer.ID{}
+				if err := json.Unmarshal(rawPeerList, &peerList); err != nil {
+					o.logger.Error("decoding storage peer list", zap.Error(err))
+					return
+				}
+				peerList = append(peerList, o.HostID())
+
+				record, err := ipns.NewRecord(cpk, p, 1, time.Now().Add(ipns.DefaultRecordLifetime), ipns.DefaultRecordTTL, ipns.WithOtterNodes(peerList))
 				if err != nil {
 					o.logger.Error("encoding ipns record", zap.Error(err))
 					return

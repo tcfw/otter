@@ -72,6 +72,10 @@ func (pd *DHTPubSubDiscovery) FindPeers(ctx context.Context, ns string, opts ...
 		}
 	}
 
+	if options.Limit == 0 {
+		options.Limit = 20
+	}
+
 	pd.o.logger.Named("pubsub-dht").Debug("finding peers for pubsub topic", zap.Any("ns", ns))
 
 	cid, err := pd.getCID(ns)

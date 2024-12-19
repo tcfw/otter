@@ -10,6 +10,11 @@ type NewKeyRequest struct {
 	Password string `json:"password"`
 }
 
+type ImportKeyRequest struct {
+	Password string `json:"password"`
+	Mnemonic string `json:"mnemonic"`
+}
+
 type NewKeyResponse struct {
 	Mnemonic string      `json:"mnemonic"`
 	PublicID id.PublicID `json:"publicID"`

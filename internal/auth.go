@@ -24,7 +24,7 @@ const (
 
 func (o *Otter) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/oauth") {
+		if strings.HasPrefix(r.URL.Path, "/api/oauth") || r.URL.Path == "/api/keys/import" {
 			next.ServeHTTP(w, r)
 			return
 		}

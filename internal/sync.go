@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	v1api "github.com/tcfw/otter/pkg/api"
+	"github.com/tcfw/otter/pkg/id"
+
 	"github.com/ipfs/go-datastore"
 	crdt "github.com/ipfs/go-ds-crdt"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/tcfw/otter/pkg/id"
 	"go.uber.org/zap"
 )
 
@@ -90,6 +94,25 @@ func (o *Otter) getAllowedSyncerPeers(ctx context.Context, pubk id.PublicID) ([]
 	}
 
 	return peerList, nil
+}
+
+func (o *Otter) setAllowedSyncerPeers(ctx context.Context, pubk id.PublicID, peers []peer.ID) error {
+	sc, err := o.Storage().Public(pubk)
+	if err != nil {
+		return fmt.Errorf("getting account public store: %w", err)
+	}
+
+	buf, err := json.Marshal(peers)
+	if err != nil {
+		return fmt.Errorf("encoding storage peer list: %w", err)
+	}
+
+	err = sc.Put(ctx, datastore.NewKey("storagePeers"), buf)
+	if err != nil {
+		return fmt.Errorf("getting storage peer allow list: %w", err)
+	}
+
+	return nil
 }
 
 func (o *Otter) GetOrNewAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer, error) {
@@ -173,4 +196,60 @@ func (o *Otter) StopAccountSyncer(ctx context.Context, pubk id.PublicID) error {
 	}
 
 	return nil
+}
+
+func (o *Otter) apiHandle_Sync_GetAllowedPeers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	id, err := v1api.GetAuthIDFromContext(ctx)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	peers, err := o.getAllowedSyncerPeers(ctx, id)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(peers); err != nil {
+		apiJSONError(w, err)
+		return
+	}
+}
+
+func (o *Otter) apiHandle_Sync_SetAllowedPeers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	id, err := v1api.GetAuthIDFromContext(ctx)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	peers := []peer.ID{}
+
+	if err := json.NewDecoder(io.LimitReader(r.Body, 10*1024)).Decode(&peers); err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	if len(peers) == 0 {
+		apiJSONErrorWithStatus(w, errors.New("at least 1 peer is required"), http.StatusBadRequest)
+		return
+	}
+
+	for _, peer := range peers {
+		if err := peer.Validate(); err != nil {
+			apiJSONErrorWithStatus(w, err, http.StatusBadRequest)
+			return
+		}
+	}
+
+	err = o.setAllowedSyncerPeers(ctx, id, peers)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
 }

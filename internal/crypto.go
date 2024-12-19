@@ -214,6 +214,26 @@ func privateKeytoStorageKey(pk id.PrivateKey) ([]byte, error) {
 	return sk, nil
 }
 
+func (o *Otter) apiHandle_Keys_ImportKey(w http.ResponseWriter, r *http.Request) {
+	req := &v1api.ImportKeyRequest{}
+
+	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+		apiJSONError(w, fmt.Errorf("decoding body: %w", err))
+		return
+	}
+
+	_, priv, err := id.RecoverKey(req.Mnemonic, req.Password)
+	if err != nil {
+		apiJSONError(w, fmt.Errorf("recovering key: %w", err))
+		return
+	}
+
+	if err := o.storeKey(r.Context(), priv, req.Password); err != nil {
+		apiJSONError(w, err)
+		return
+	}
+}
+
 func (o *Otter) apiHandle_Keys_NewKey(w http.ResponseWriter, r *http.Request) {
 	req := &v1api.NewKeyRequest{}
 
@@ -233,24 +253,7 @@ func (o *Otter) apiHandle_Keys_NewKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ss, err := o.sc.System()
-	if err != nil {
-		apiJSONError(w, err)
-		return
-	}
-
-	if err := ss.Put(r.Context(), datastore.NewKey(systemPrefix_Keys+string(pub)), []byte(priv)); err != nil {
-		apiJSONError(w, err)
-		return
-	}
-
-	h, err := hashPassword(req.Password)
-	if err != nil {
-		apiJSONError(w, err)
-		return
-	}
-
-	if err := ss.Put(r.Context(), datastore.NewKey(systemPrefix_Pass+string(pub)), []byte(h)); err != nil {
+	if err := o.storeKey(r.Context(), priv, req.Password); err != nil {
 		apiJSONError(w, err)
 		return
 	}
@@ -259,6 +262,33 @@ func (o *Otter) apiHandle_Keys_NewKey(w http.ResponseWriter, r *http.Request) {
 		Mnemonic: mn,
 		PublicID: pub,
 	})
+}
+
+func (o *Otter) storeKey(ctx context.Context, priv id.PrivateKey, pass string) error {
+	ss, err := o.sc.System()
+	if err != nil {
+		return err
+	}
+
+	h, err := hashPassword(pass)
+	if err != nil {
+		return err
+	}
+
+	pub, err := priv.PublicKey()
+	if err != nil {
+		return err
+	}
+
+	if err := ss.Put(ctx, datastore.NewKey(systemPrefix_Keys+string(pub)), []byte(priv)); err != nil {
+		return err
+	}
+
+	if err := ss.Put(ctx, datastore.NewKey(systemPrefix_Pass+string(pub)), []byte(h)); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (o *Otter) apiHandle_Keys_List(w http.ResponseWriter, r *http.Request) {

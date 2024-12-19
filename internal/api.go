@@ -68,6 +68,7 @@ func (o *Otter) initAPIRouter() (*mux.Router, error) {
 	apis.HandleFunc("/oauth/token", o.apiHandle_OAuth_Token)
 
 	apis.HandleFunc("/keys/new", o.apiHandle_Keys_NewKey).Methods(http.MethodPost)
+	apis.HandleFunc("/keys/import", o.apiHandle_Keys_ImportKey).Methods(http.MethodPost)
 	apis.HandleFunc("/keys", o.apiHandle_Keys_List).Methods(http.MethodGet)
 	apis.HandleFunc("/keys", o.apiHandle_Keys_Delete).Methods(http.MethodDelete)
 	apis.HandleFunc("/keys/sign", o.apiHandle_Keys_Sign).Methods(http.MethodPost)
@@ -75,6 +76,9 @@ func (o *Otter) initAPIRouter() (*mux.Router, error) {
 	apis.HandleFunc("/p2p/peers", o.apiHandle_P2P_Peers).Methods(http.MethodGet)
 
 	apis.HandleFunc("/otter/providers", o.apiHandle_Otter_Providers).Methods(http.MethodGet)
+
+	apis.HandleFunc("/sync/peers", o.apiHandle_Sync_GetAllowedPeers).Methods(http.MethodGet)
+	apis.HandleFunc("/sync/peers", o.apiHandle_Sync_SetAllowedPeers).Methods(http.MethodPost)
 
 	o.apiRouter = apis
 	return r, nil
