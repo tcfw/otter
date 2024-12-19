@@ -222,6 +222,7 @@ func (o *Otter) apiHandle_Sync_GetAllowedPeers(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	w.Header().Add("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(peers); err != nil {
 		apiJSONError(w, err)
 		return
@@ -278,5 +279,11 @@ func (o *Otter) apiHandle_Sync_Stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(s.publicSyncer.InternalStats(ctx))
+	resp := &v1api.SyncStatsResponse{
+		Public:  s.publicSyncer.InternalStats(ctx),
+		Private: s.privateSyncer.InternalStats(ctx),
+	}
+
+	w.Header().Add("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
