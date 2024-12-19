@@ -84,8 +84,12 @@ func (o *Otter) getAllowedSyncerPeers(ctx context.Context, pubk id.PublicID) ([]
 	}
 
 	rawPeerList, err := sc.Get(ctx, datastore.NewKey("storagePeers"))
-	if err != nil {
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 		return nil, fmt.Errorf("getting storage peer allow list: %w", err)
+	}
+
+	if len(rawPeerList) == 0 {
+		rawPeerList = []byte(`[]`)
 	}
 
 	peerList := []peer.ID{}
