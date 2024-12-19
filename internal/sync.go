@@ -257,3 +257,21 @@ func (o *Otter) apiHandle_Sync_SetAllowedPeers(w http.ResponseWriter, r *http.Re
 		return
 	}
 }
+
+func (o *Otter) apiHandle_Sync_Stats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	id, err := v1api.GetAuthIDFromContext(ctx)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	s, err := o.GetOrNewAccountSyncer(ctx, id)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	json.NewEncoder(w).Encode(s.publicSyncer.InternalStats(ctx))
+}

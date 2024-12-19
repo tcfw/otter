@@ -79,6 +79,7 @@ func (o *Otter) initAPIRouter() (*mux.Router, error) {
 
 	apis.HandleFunc("/sync/peers", o.apiHandle_Sync_GetAllowedPeers).Methods(http.MethodGet)
 	apis.HandleFunc("/sync/peers", o.apiHandle_Sync_SetAllowedPeers).Methods(http.MethodPost)
+	apis.HandleFunc("/sync/stats", o.apiHandle_Sync_Stats).Methods(http.MethodGet)
 
 	o.apiRouter = apis
 	return r, nil
