@@ -199,10 +199,10 @@ func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer
 				t.Stop()
 				return
 			case <-t.C:
-				if err := publicSyncer.Sync(ctx, publicPrefix); err != nil {
+				if err := publicSyncer.Sync(ctx, datastore.NewKey("/")); err != nil {
 					o.logger.Error("syncing public syncer", zap.Error(err))
 				}
-				if err := privateSyncer.Sync(ctx, privatePrefix); err != nil {
+				if err := privateSyncer.Sync(ctx, datastore.NewKey("/")); err != nil {
 					o.logger.Error("syncing private syncer", zap.Error(err))
 				}
 			}
