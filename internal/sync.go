@@ -295,7 +295,7 @@ func (o *Otter) apiHandle_Sync_Stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s, err := o.GetOrNewAccountSyncer(ctx, id)
+	s, err := o.GetOrNewAccountSyncer(o.ctx, id)
 	if err != nil {
 		apiJSONError(w, err)
 		return
