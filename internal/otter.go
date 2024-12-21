@@ -173,14 +173,6 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 
 				for _, p := range peerList {
 					o.p2p.ConnManager().Protect(p, "storage_syncer")
-					go func() {
-						ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-						defer cancel()
-
-						if err := o.p2p.Connect(ctx, peer.AddrInfo{ID: p}); err != nil {
-							o.logger.Error("connecting to storage peer", zap.Error(err))
-						}
-					}()
 				}
 
 				record, err := ipns.NewRecord(cpk, p, 1, time.Now().Add(ipns.DefaultRecordLifetime), ipns.DefaultRecordTTL, ipns.WithOtterNodes(peerList))
