@@ -12,6 +12,7 @@ import (
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 
+	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -178,6 +179,8 @@ func (o *Otter) initPOISRouter() error {
 			h.ServeHTTP(w, r)
 		})
 	})
+
+	r.Use(handlers.CORS(handlers.AllowCredentials()))
 
 	r.HandleFunc("/version", o.apiHandle_Version)
 
