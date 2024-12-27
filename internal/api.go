@@ -131,12 +131,16 @@ func (o *Otter) setupPOISGW(ctx context.Context) error {
 			return fmt.Errorf("adding manet listener: %w", err)
 		}
 
+		handler := http.Handler(http.HandlerFunc(o.poisRouter.ServeHTTP))
+
 		netLis := manet.NetListener(lis)
 
 		if useTLS {
 			autocert := &autocert.Manager{
 				Prompt: autocert.AcceptTOS,
 			}
+
+			handler = autocert.HTTPHandler(handler)
 
 			netLis = tls.NewListener(netLis, &tls.Config{
 				NextProtos: []string{"h2", "http/1.1", acme.ALPNProto},
@@ -150,7 +154,7 @@ func (o *Otter) setupPOISGW(ctx context.Context) error {
 			})
 		}
 
-		go http.Serve(netLis, http.HandlerFunc(o.poisRouter.ServeHTTP))
+		go http.Serve(netLis, handler)
 
 		o.logger.Debug("POIS gw listening", zap.Any("addr", ma.String()))
 
