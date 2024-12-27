@@ -1,6 +1,7 @@
 package activitypub
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -288,8 +289,18 @@ func (a *ActivityPubHandler) doPublishWebFinger(ctx context.Context, key id.Publ
 	if err != nil {
 		return fmt.Errorf("getting public storage: %w", err)
 	}
-	if err := sc.Put(ctx, datastore.NewKey("webfinger-cid"), c.Bytes()); err != nil {
-		return fmt.Errorf("setting public webfinger cid: %w", err)
+
+	dsk := datastore.NewKey("webfinger-cid")
+
+	currentVal, err := sc.Get(ctx, dsk)
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+		return fmt.Errorf("checking webfinger-cid")
+	}
+
+	if bytes.Equal(currentVal, c.Bytes()) {
+		if err := sc.Put(ctx, dsk, c.Bytes()); err != nil {
+			return fmt.Errorf("setting public webfinger cid: %w", err)
+		}
 	}
 
 	blk, err := blocks.NewBlockWithCid(enc, c)
