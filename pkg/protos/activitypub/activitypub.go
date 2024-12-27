@@ -175,12 +175,14 @@ func (a *ActivityPubHandler) localActor(ctx context.Context, pub id.PublicID) (*
 				Type:    "Person",
 			},
 		},
-		Id:        string(pub),
-		Inbox:     bURL + poisPathInbox,
-		Outbox:    bURL + poisPathOutbox,
-		Followers: bURL + poisPathFollowers,
-		Following: bURL + poisPathFollowing,
-		Liked:     bURL + poisPathLiked,
+		Id:                        string(pub),
+		Inbox:                     bURL + poisPathInbox,
+		Outbox:                    bURL + poisPathOutbox,
+		Followers:                 bURL + poisPathFollowers,
+		Following:                 bURL + poisPathFollowing,
+		Liked:                     bURL + poisPathLiked,
+		ManuallyApprovesFollowers: true,
+		Discoverable:              true,
 	}
 
 	ps, err := a.o.Storage().Public(pub)
@@ -280,6 +282,14 @@ func (a *ActivityPubHandler) doPublishWebFinger(ctx context.Context, key id.Publ
 	c, err := cidb.Sum(enc)
 	if err != nil {
 		return fmt.Errorf("creating cid: %w", err)
+	}
+
+	sc, err := a.o.Storage().Public(key)
+	if err != nil {
+		return fmt.Errorf("getting public storage: %w", err)
+	}
+	if err := sc.Put(ctx, datastore.NewKey("webfinger-cid"), c.Bytes()); err != nil {
+		return fmt.Errorf("setting public webfinger cid: %w", err)
 	}
 
 	blk, err := blocks.NewBlockWithCid(enc, c)

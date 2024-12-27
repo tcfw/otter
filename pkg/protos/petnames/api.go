@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/ipfs/go-datastore"
 	"github.com/tcfw/otter/pkg/id"
 	"go.uber.org/zap"
@@ -120,20 +119,9 @@ func (p *PetnamesHandler) apiHandle_SetProposedName(w http.ResponseWriter, r *ht
 		return
 	}
 
-	pid, ok := mux.Vars(r)["id"]
-	if pid == "" || !ok {
-		http.Error(w, "no auth set", http.StatusBadRequest)
-		return
-	}
-
 	auth, err := v1api.GetAuthIDFromContext(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if auth != id.PublicID(pid) {
-		http.Error(w, "not authorised", http.StatusUnauthorized)
 		return
 	}
 

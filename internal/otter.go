@@ -144,15 +144,26 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 					return
 				}
 
-				p, err := path.NewPath("/ipfs/baguqeeravj3jdht6ccttqaaritwhorjhcupdyueu72x2q473atcegs4ep3tq")
-				if err != nil {
-					o.logger.Error("decoding path for ipns publish", zap.Error(err))
-					return
-				}
-
 				sc, err := o.Storage().Public(pubk)
 				if err != nil {
 					o.logger.Error("getting public storage for key for ipns publish", zap.Error(err))
+					return
+				}
+
+				wcid, err := sc.Get(ctx, datastore.NewKey("webfinger-cid"))
+				if err != nil {
+					if !errors.Is(err, datastore.ErrNotFound) {
+						o.logger.Error("getting webfinger cid", zap.Error(err))
+						continue
+					}
+
+					//TODO(tcfw): set to empty webfinger
+					wcid = []byte(`/ipfs/baguqeeravj3jdht6ccttqaaritwhorjhcupdyueu72x2q473atcegs4ep3tq`)
+				}
+
+				p, err := path.NewPath(string(wcid))
+				if err != nil {
+					o.logger.Error("decoding path for ipns publish", zap.Error(err))
 					return
 				}
 

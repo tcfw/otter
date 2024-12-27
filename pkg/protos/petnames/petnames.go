@@ -26,7 +26,7 @@ func Register(o otter.Otter) {
 	o.Protocols().RegisterP2PHandler(protoID, pnh.handle)
 
 	o.Protocols().RegisterAPIHandlers(func(r *mux.Router) {
-		sr := r.PathPrefix("/petnames/{id}/").Subrouter()
+		sr := r.PathPrefix("/petnames/").Subrouter()
 		sr.HandleFunc("/setproposedname", pnh.apiHandle_SetProposedName).Methods(http.MethodPost)
 	})
 }

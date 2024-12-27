@@ -181,6 +181,11 @@ type Actor struct {
 	Streams           string           `json:"streams,omitempty"`
 	PreferredUsername string           `json:"preferredUsername,omitempty"`
 	Endpoints         []ActorEndpoints `json:"endpoints,omitempty"`
+
+	ManuallyApprovesFollowers bool `json:"manuallyApprovesFollowers"`
+	Discoverable              bool `json:"discoverable"`
+
+	LastStatusAt time.Time `json:"last_status_at"`
 }
 
 type ActorEndpoints struct {
