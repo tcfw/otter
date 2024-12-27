@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/tcfw/otter/internal/utils"
 	"github.com/tcfw/otter/internal/version"
 	v1api "github.com/tcfw/otter/pkg/api"
 	"golang.org/x/crypto/acme"
@@ -121,6 +122,11 @@ func (o *Otter) setupPOISGW(ctx context.Context) error {
 	listenAddrs := o.GetConfigAs([]string{}, config.POIS_ListenAddrs).([]string)
 	useTLS := o.GetConfigAs(true, config.POIS_EnableTLS).(bool)
 
+	sc, err := o.Storage().System()
+	if err != nil {
+		return fmt.Errorf("getting public store for autocert cache: %w", err)
+	}
+
 	for _, addr := range listenAddrs {
 		ma, err := multiaddr.NewMultiaddr(addr)
 		if err != nil {
@@ -139,6 +145,8 @@ func (o *Otter) setupPOISGW(ctx context.Context) error {
 		if useTLS {
 			autocert := &autocert.Manager{
 				Prompt: autocert.AcceptTOS,
+				Cache:  utils.NewAutoCertDSCache(sc, "acme"),
+				Client: &acme.Client{DirectoryURL: "https://acme-staging-v02.api.letsencrypt.org/directory"},
 			}
 
 			handler = autocert.HTTPHandler(handler)
@@ -180,7 +188,7 @@ func (o *Otter) initPOISRouter() error {
 		})
 	})
 
-	r.Use(handlers.CORS(handlers.AllowCredentials()))
+	r.Use(handlers.CORS(handlers.AllowCredentials(), handlers.AllowedOrigins([]string{"*"})))
 
 	r.HandleFunc("/version", o.apiHandle_Version)
 

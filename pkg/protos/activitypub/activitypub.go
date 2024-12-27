@@ -176,7 +176,7 @@ func (a *ActivityPubHandler) localActor(ctx context.Context, pub id.PublicID) (*
 				Type:    "Person",
 			},
 		},
-		Id:                        string(pub),
+		Id:                        bURL,
 		Inbox:                     bURL + poisPathInbox,
 		Outbox:                    bURL + poisPathOutbox,
 		Followers:                 bURL + poisPathFollowers,
