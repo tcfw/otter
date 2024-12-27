@@ -2,8 +2,10 @@ package utils
 
 import (
 	"context"
+	"errors"
 
 	"github.com/ipfs/go-datastore"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 type AutoCertDSCache struct {
@@ -21,7 +23,14 @@ func NewAutoCertDSCache(ds datastore.Datastore, ns string) *AutoCertDSCache {
 // Get returns a certificate data for the specified key.
 // If there's no such key, Get returns ErrCacheMiss.
 func (a *AutoCertDSCache) Get(ctx context.Context, key string) ([]byte, error) {
-	return a.ds.Get(ctx, a.ns.Child(datastore.NewKey(key)))
+	val, err := a.ds.Get(ctx, a.ns.Child(datastore.NewKey(key)))
+	if err != nil {
+		if errors.Is(err, datastore.ErrNotFound) {
+			return nil, autocert.ErrCacheMiss
+		}
+		return nil, err
+	}
+	return val, nil
 }
 
 // Put stores the data in the cache under the specified key.
