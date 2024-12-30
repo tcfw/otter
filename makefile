@@ -12,7 +12,7 @@ run:
 
 .PHONY: dist
 dist:
-	go build -ldflags="-w -s ${LDFLAGS}" -o dist/otter .
+	go build ${TAGS} -ldflags="-w -s ${LDFLAGS}" -o dist/otter .
 
 clean:
 	rm -rf ./dist/*
