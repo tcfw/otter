@@ -169,21 +169,40 @@ func (a *ActivityPubHandler) handleProfile(r *pb.Request) (*pb.Response, error) 
 func (a *ActivityPubHandler) localActor(ctx context.Context, pub id.PublicID) (*Actor, error) {
 	bURL := a.baseURL(pub)
 
+	pem, err := pub.AsPEM()
+	if err != nil {
+		return nil, err
+	}
+
 	actor := &Actor{
 		Object: Object{
 			JSONLD: JSONLD{
-				Context: []string{"https://www.w3.org/ns/activitystreams"},
-				Type:    "Person",
+				Context: []any{
+					"https://www.w3.org/ns/activitystreams",
+					"https://w3id.org/security/v1",
+					map[string]string{
+						"toot":         "http://joinmastodon.org/ns#",
+						"discoverable": "toot:discoverable",
+					},
+				},
+				Type: "Person",
 			},
+			Url: &LinkRef{Single: bURL},
 		},
-		Id:                        bURL,
-		Inbox:                     bURL + poisPathInbox,
-		Outbox:                    bURL + poisPathOutbox,
-		Followers:                 bURL + poisPathFollowers,
-		Following:                 bURL + poisPathFollowing,
-		Liked:                     bURL + poisPathLiked,
-		ManuallyApprovesFollowers: true,
-		Discoverable:              true,
+		Id:        bURL,
+		Inbox:     bURL + poisPathInbox,
+		Outbox:    bURL + poisPathOutbox,
+		Followers: bURL + poisPathFollowers,
+		Following: bURL + poisPathFollowing,
+		Liked:     bURL + poisPathLiked,
+
+		Discoverable: true,
+
+		PublicKey: ActorPublicKey{
+			Id:           bURL + "#main-key",
+			Owner:        bURL,
+			PublicKeyPEM: pem,
+		},
 	}
 
 	ps, err := a.o.Storage().Public(pub)
@@ -194,6 +213,27 @@ func (a *ActivityPubHandler) localActor(ctx context.Context, pub id.PublicID) (*
 	pu, err := ps.Get(ctx, datastore.NewKey("prefUsername"))
 	if err == nil && len(pu) != 0 {
 		actor.PreferredUsername = string(pu)
+	} else {
+		actor.PreferredUsername = "me"
+	}
+
+	const publishedAtKey = "publishedAt"
+
+	pa, err := ps.Get(ctx, datastore.NewKey(publishedAtKey))
+	if err == nil && len(pa) != 0 {
+		tpa, err := time.Parse(time.RFC3339, string(pa))
+		if err != nil {
+			return nil, err
+		}
+		actor.Published = &tpa
+	} else {
+		nt := time.Now()
+		ntf := nt.Format(time.RFC3339)
+		err := ps.Put(ctx, datastore.NewKey(publishedAtKey), []byte(ntf))
+		if err != nil {
+			return nil, err
+		}
+		actor.Published = &nt
 	}
 
 	if pn := plugins.GetByName("petnames"); pn != nil {
@@ -211,9 +251,20 @@ func (a *ActivityPubHandler) localActor(ctx context.Context, pub id.PublicID) (*
 }
 
 func (a *ActivityPubHandler) baseURL(pub id.PublicID) string {
+	domain := poisGateway
+	// domain := "social.tcfw.au"
+
+	// ds, err := a.o.Storage().Public(pub)
+	// if err == nil {
+	// 	d, err := ds.Get(context.Background(), datastore.NewKey("identityDomain"))
+	// 	if err == nil {
+	// 		domain = string(d)
+	// 	}
+	// }
+
 	directoryLink := url.URL{}
 	directoryLink.Scheme = "https"
-	directoryLink.Host = poisGateway
+	directoryLink.Host = domain
 	directoryLink.Path = poisPrefix + string(pub) + "/"
 	dURL := directoryLink.String()
 	return dURL
@@ -241,6 +292,7 @@ func (a *ActivityPubHandler) doPublishWebFinger(ctx context.Context, key id.Publ
 
 	finger := &WebFingerJRD{
 		Aliases: []string{dURL},
+		Subject: fmt.Sprintf("acct:%s@%s", key, poisGateway),
 		Links: []WebFingerJRDLink{
 			{Href: dURL, Rel: "self", Type: "application/activity+json"},
 			{Href: dURL, Rel: "self", Type: "application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\""},
@@ -455,7 +507,9 @@ func (a *ActivityPubHandler) resolveDNSLink(ctx context.Context, handle string) 
 		return nil, fmt.Errorf("unmarshalling actor: %w", err)
 	}
 
-	actor.Subject = "acct:" + handle
+	if actor.Subject == "" {
+		actor.Subject = "acct:" + handle
+	}
 
 	return actor, nil
 }
@@ -491,6 +545,21 @@ func (a *ActivityPubHandler) poisResolve(w http.ResponseWriter, r *http.Request)
 	if r.Host != resParts[1] {
 		actor, err = a.resolveWebFinger(ctx, res)
 	}
+
+	if resParts[1] == poisGateway {
+		key := id.PublicID(resParts[0])
+		dURL := a.baseURL(key)
+
+		actor = &WebFingerJRD{
+			Aliases: []string{dURL},
+			Subject: fmt.Sprintf("acct:%s@%s", key, poisGateway),
+			Links: []WebFingerJRDLink{
+				{Href: dURL, Rel: "self", Type: "application/activity+json"},
+				{Href: dURL, Rel: "self", Type: "application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\""},
+			},
+		}
+	}
+
 	if err != nil || actor == nil {
 		a.logger.Error("resolving via webfinger, trying dnslink", zap.Any("actor", res), zap.Error(err))
 		errCh := make(chan error, 1)
@@ -562,7 +631,7 @@ func (a *ActivityPubHandler) poisProfile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Add("Content-Type", "application/json+ld")
+	w.Header().Add("Content-Type", "application/activity+json; charset=utf-8")
 	w.Write([]byte(resp.JsonLD))
 }
 
@@ -657,8 +726,11 @@ func (a *ActivityPubHandler) poisInbox(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *ActivityPubHandler) poisOutbox(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Content-Type", "application/activity+json; charset=utf-8")
+
 	w.Write([]byte(`{
   "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://` + r.Host + r.URL.String() + `",
   "type": "OrderedCollection",
   "totalItems": 0,
   "orderedItems": []
@@ -666,8 +738,11 @@ func (a *ActivityPubHandler) poisOutbox(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *ActivityPubHandler) poisFollowers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Content-Type", "application/activity+json; charset=utf-8")
+
 	w.Write([]byte(`{
   "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://` + r.Host + r.URL.String() + `",
   "type": "OrderedCollection",
   "totalItems": 0,
   "orderedItems": []
@@ -675,8 +750,11 @@ func (a *ActivityPubHandler) poisFollowers(w http.ResponseWriter, r *http.Reques
 }
 
 func (a *ActivityPubHandler) poisFollowing(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Content-Type", "application/activity+json; charset=utf-8")
+
 	w.Write([]byte(`{
   "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://` + r.Host + r.URL.String() + `",
   "type": "OrderedCollection",
   "totalItems": 0,
   "orderedItems": []
@@ -684,8 +762,11 @@ func (a *ActivityPubHandler) poisFollowing(w http.ResponseWriter, r *http.Reques
 }
 
 func (a *ActivityPubHandler) poisLiked(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Content-Type", "application/activity+json; charset=utf-8")
+
 	w.Write([]byte(`{
   "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://` + r.Host + r.URL.String() + `",
   "type": "OrderedCollection",
   "totalItems": 0,
   "orderedItems": []

@@ -4,6 +4,8 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 
@@ -38,6 +40,21 @@ func (pubk PublicID) AsLibP2P() (libp2pCrypto.PubKey, error) {
 	default:
 		return nil, fmt.Errorf("unsupported key type: %T", pkt)
 	}
+}
+
+func (pubk PublicID) AsPEM() (string, error) {
+	pk, err := DecodeCryptoMaterial(string(pubk))
+	if err != nil {
+		return "", err
+	}
+
+	der, err := x509.MarshalPKIXPublicKey(pk)
+	if err != nil {
+		return "", err
+	}
+
+	p := pem.EncodeToMemory(&pem.Block{Bytes: der, Type: "PUBLIC KEY"})
+	return string(p), nil
 }
 
 // PublicKey returns the encoded public key

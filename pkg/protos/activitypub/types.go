@@ -60,7 +60,10 @@ type Object struct {
 	Duration     time.Duration     `json:"duration,omitempty"`
 }
 
-type Image struct{}
+type Image struct {
+	Object
+}
+
 type Location struct{}
 
 type Link struct {
@@ -182,10 +185,13 @@ type Actor struct {
 	PreferredUsername string           `json:"preferredUsername,omitempty"`
 	Endpoints         []ActorEndpoints `json:"endpoints,omitempty"`
 
+	PublicKey ActorPublicKey `json:"publicKey"`
+
 	ManuallyApprovesFollowers bool `json:"manuallyApprovesFollowers"`
 	Discoverable              bool `json:"discoverable"`
 
-	LastStatusAt time.Time `json:"last_status_at"`
+	Published    *time.Time `json:"published,omitempty"`
+	LastStatusAt *time.Time `json:"last_status_at,omitempty"`
 }
 
 type ActorEndpoints struct {
@@ -195,6 +201,12 @@ type ActorEndpoints struct {
 	ProvideClientKey           string `json:"provideClientKey"`
 	SignClientKey              string `json:"signClientKey"`
 	SharedInbox                string `json:"sharedInbox"`
+}
+
+type ActorPublicKey struct {
+	Owner        string `json:"owner"`
+	Id           string `json:"id"`
+	PublicKeyPEM string `json:"publicKeyPem"`
 }
 
 type Activity struct {

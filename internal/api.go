@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/ipfs/go-datastore"
+	"github.com/ipfs/go-datastore/query"
 	"github.com/tcfw/otter/internal/utils"
 	"github.com/tcfw/otter/internal/version"
 	v1api "github.com/tcfw/otter/pkg/api"
@@ -19,6 +21,10 @@ import (
 	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/tcfw/otter/pkg/config"
 	"go.uber.org/zap"
+)
+
+const (
+	tlsCachePrefix = "acme"
 )
 
 func (o *Otter) setupAPI(ctx context.Context) error {
@@ -85,6 +91,8 @@ func (o *Otter) initAPIRouter() (*mux.Router, error) {
 
 	apis.HandleFunc("/storage/keys", o.apiHandle_Storage_ListKeys).Methods(http.MethodGet)
 
+	apis.HandleFunc("/debug/clear_tls", o.apiHandle_Debug_ClearTLS).Methods(http.MethodPost)
+
 	o.apiRouter = apis
 	return r, nil
 }
@@ -145,8 +153,8 @@ func (o *Otter) setupPOISGW(ctx context.Context) error {
 		if useTLS {
 			autocert := &autocert.Manager{
 				Prompt: autocert.AcceptTOS,
-				Cache:  utils.NewAutoCertDSCache(sc, "acme"),
-				Client: &acme.Client{DirectoryURL: "https://acme-staging-v02.api.letsencrypt.org/directory"},
+				Cache:  utils.NewAutoCertDSCache(sc, tlsCachePrefix),
+				// Client: &acme.Client{DirectoryURL: "https://acme-staging-v02.api.letsencrypt.org/directory"},
 			}
 
 			handler = autocert.HTTPHandler(handler)
@@ -210,4 +218,27 @@ func (o *Otter) RegisterAPIHandler(rr func(r *mux.Route)) {
 
 func (o *Otter) RegisterAPIHandlers(rr func(r *mux.Router)) {
 	rr(o.apiRouter)
+}
+
+func (o *Otter) apiHandle_Debug_ClearTLS(w http.ResponseWriter, r *http.Request) {
+	sc, err := o.Storage().System()
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	ctx := r.Context()
+
+	res, err := sc.Query(ctx, query.Query{Prefix: tlsCachePrefix})
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	for e := range res.Next() {
+		if err := sc.Delete(ctx, datastore.NewKey(e.Key)); err != nil {
+			apiJSONError(w, err)
+			return
+		}
+	}
 }

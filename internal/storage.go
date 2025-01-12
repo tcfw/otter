@@ -23,7 +23,7 @@ const (
 	publicKeyPrefix  = "/account/public/"
 	privateKeyPrefix = "/account/private/"
 
-	systemPrefix_Keys = "keys/"
+	systemPrefix_Keys = "/keys/"
 	systemPrefix_Pass = "pass/"
 )
 

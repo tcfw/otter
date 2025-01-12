@@ -186,7 +186,7 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 					o.p2p.ConnManager().Protect(p, "storage_syncer")
 				}
 
-				record, err := ipns.NewRecord(cpk, p, 1, time.Now().Add(ipns.DefaultRecordLifetime), ipns.DefaultRecordTTL, ipns.WithOtterNodes(peerList))
+				record, err := ipns.NewRecord(cpk, p, 2, time.Now().Add(ipns.DefaultRecordLifetime), ipns.DefaultRecordTTL, ipns.WithOtterNodes(peerList))
 				if err != nil {
 					o.logger.Error("encoding ipns record", zap.Error(err))
 					return
