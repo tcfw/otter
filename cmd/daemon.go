@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/spf13/cobra"
@@ -45,12 +44,6 @@ var daemonCmd = &cobra.Command{
 		logger = logger.Named("daemon")
 
 		logger.Info("Started", zap.Any("peerId", o.P2P().ID().String()))
-
-		go func() {
-			for range time.NewTicker(1 * time.Minute).C {
-				logger.Debug("peer count", zap.Any("n", len(o.P2P().Network().Peers())))
-			}
-		}()
 
 		go func() {
 			sub, err := o.P2P().EventBus().Subscribe(&event.EvtLocalAddressesUpdated{})

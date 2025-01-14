@@ -102,6 +102,8 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 		return nil, fmt.Errorf("initing ipfs-lite: %w", err)
 	}
 
+	go o.watchPeers()
+
 	go func() {
 		sub, err := o.p2p.EventBus().Subscribe(&event.EvtLocalProtocolsUpdated{})
 		if err != nil {
@@ -236,6 +238,28 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 	loadExternalPlugins(o)
 
 	return o, nil
+}
+
+func (o *Otter) watchPeers() {
+	t := time.NewTicker(1 * time.Minute)
+
+	for {
+		select {
+		case <-t.C:
+		case <-o.ctx.Done():
+			t.Stop()
+			return
+		}
+
+		count := len(o.P2P().Network().Peers())
+
+		o.logger.Debug("peer count", zap.Any("n", count))
+
+		if count == 0 {
+			o.logger.Debug("no peers. restarting bootstrap")
+			o.Bootstrap(nil)
+		}
+	}
 }
 
 func loadExternalPlugins(o *Otter) {
