@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package email;
 
-option go_package = "github.com/tcfw/pkg/protos/email/pb";
+option go_package = "github.com/tcfw/otter/pkg/protos/email/pb";
 
 enum RequestType {
 	RECEIVE_EMAIL = 0;
@@ -10,10 +10,10 @@ enum RequestType {
 
 message Request {
 	string publicID = 1;
-	RequestType type = 2;
+	bytes signature = 2;
 	
 	oneof Data {
-		ReceiveEmail ReceiveEmail = 3;
+		ReceiveEmail receiveEmail = 3;
 	};
 }
 
@@ -22,8 +22,9 @@ message Response {
 }
 
 message ReceiveEmail {
-	string ForwardedFrom = 1;
-	string EnvelopeFrom = 2;
-	string EnvelopeTo = 3;
-	bytes Envelope = 4;
+	string hello = 1;
+	string ip = 2;
+	string from = 3;
+	string to = 4;
+	bytes envelope = 5;
 };

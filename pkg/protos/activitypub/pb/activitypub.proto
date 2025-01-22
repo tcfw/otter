@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package activitypub;
 
-option go_package = "github.com/tcfw/pkg/protos/activitypub/pb";
+option go_package = "github.com/tcfw/otter/pkg/protos/activitypub/pb";
 
 enum RequestType {
 	PROFILE = 0;
