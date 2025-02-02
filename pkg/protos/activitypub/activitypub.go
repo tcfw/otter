@@ -94,7 +94,12 @@ type ActivityPubHandler struct {
 }
 
 func (a *ActivityPubHandler) publishWebFingers() {
-	t := time.NewTicker(30 * time.Second)
+	<-a.o.WaitForBootstrap(context.Background())
+
+	a.doPublishWebFingers()
+
+	t := time.NewTicker(5 * time.Minute)
+
 	for range t.C {
 		go a.doPublishWebFingers()
 	}

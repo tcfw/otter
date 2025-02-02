@@ -2,9 +2,6 @@ package internal
 
 import (
 	"context"
-	"crypto/ed25519"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -13,12 +10,10 @@ import (
 	"github.com/gorilla/mux"
 	ipfslite "github.com/hsanjuan/ipfs-lite"
 	"github.com/ipfs/boxo/blockstore"
-	"github.com/ipfs/boxo/path"
 	"github.com/ipfs/go-datastore"
 	ipld "github.com/ipfs/go-ipld-format"
 	dualdht "github.com/libp2p/go-libp2p-kad-dht/dual"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -26,8 +21,6 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/tcfw/otter/pkg/config"
-	"github.com/tcfw/otter/pkg/id"
-	"github.com/tcfw/otter/pkg/ipns"
 	"github.com/tcfw/otter/pkg/otter"
 	"github.com/tcfw/otter/pkg/plugins"
 	"go.uber.org/zap"
@@ -103,6 +96,7 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 	}
 
 	go o.watchPeers()
+	go o.publishIPNS(ctx)
 
 	go func() {
 		sub, err := o.p2p.EventBus().Subscribe(&event.EvtLocalProtocolsUpdated{})
@@ -113,121 +107,6 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 
 		for evt := range sub.Out() {
 			o.logger.Debug("Protocols updated", zap.Any("protocols", evt))
-		}
-	}()
-
-	go func() {
-		for {
-			time.Sleep(60 * time.Second)
-			keys, err := o.privateKeys(ctx)
-			if err != nil {
-				o.logger.Error("getting keys for ipns publish", zap.Error(err))
-				return
-			}
-
-			for _, key := range keys {
-				pubk, err := key.PublicKey()
-				if err != nil {
-					o.logger.Error("getting public key for ipns publish", zap.Error(err))
-					return
-				}
-
-				dpk, err := id.DecodeCryptoMaterial(string(key))
-				if err != nil {
-					o.logger.Error("decoding private key for ipns publish", zap.Error(err))
-					return
-				}
-
-				edpk := dpk.(ed25519.PrivateKey)
-
-				cpk, cppk, err := crypto.KeyPairFromStdKey(&edpk)
-				if err != nil {
-					o.logger.Error("unmarshalling private key for ipns publish", zap.Error(err))
-					return
-				}
-
-				sc, err := o.Storage().Public(pubk)
-				if err != nil {
-					o.logger.Error("getting public storage for key for ipns publish", zap.Error(err))
-					return
-				}
-
-				wcid, err := sc.Get(ctx, datastore.NewKey("webfinger-cid"))
-				if err != nil {
-					if !errors.Is(err, datastore.ErrNotFound) {
-						o.logger.Error("getting webfinger cid", zap.Error(err))
-						continue
-					}
-
-					//TODO(tcfw): set to empty webfinger
-					wcid = []byte(`/ipfs/baguqeeravj3jdht6ccttqaaritwhorjhcupdyueu72x2q473atcegs4ep3tq`)
-				}
-
-				p, err := path.NewPath(string(wcid))
-				if err != nil {
-					o.logger.Error("decoding path for ipns publish", zap.Error(err))
-					return
-				}
-
-				rawPeerList, err := sc.Get(ctx, datastore.NewKey("storagePeers"))
-				if err != nil && !errors.Is(err, datastore.ErrNotFound) {
-					o.logger.Error("getting storage peer allow list", zap.Error(err))
-					return
-				}
-				if rawPeerList == nil {
-					rawPeerList = []byte(`[]`)
-				}
-
-				peerList := []peer.ID{}
-				if err := json.Unmarshal(rawPeerList, &peerList); err != nil {
-					o.logger.Error("decoding storage peer list", zap.Error(err))
-					continue
-				}
-
-				for _, p := range peerList {
-					o.p2p.ConnManager().Protect(p, "storage_syncer")
-				}
-
-				record, err := ipns.NewRecord(cpk, p, 2, time.Now().Add(ipns.DefaultRecordLifetime), ipns.DefaultRecordTTL, ipns.WithOtterNodes(peerList))
-				if err != nil {
-					o.logger.Error("encoding ipns record", zap.Error(err))
-					return
-				}
-
-				bytes, err := ipns.MarshalRecord(record)
-				if err != nil {
-					o.logger.Error("marshalling ipns record", zap.Error(err))
-					return
-				}
-
-				pid, err := peer.IDFromPublicKey(cppk)
-				if err != nil {
-					o.logger.Error("getting publish ipns name", zap.Error(err))
-					return
-				}
-
-				ns := ipns.NameFromPeer(pid)
-				path := ns.AsPath()
-				rk := ns.RoutingKey()
-
-				go func() {
-					ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-					defer cancel()
-
-					o.logger.Debug("publishing IPNS record for key", zap.Any("RK", path.String()))
-
-					if err := o.dht.PutValue(ctx, string(rk), bytes); err != nil {
-						if errors.Is(err, context.DeadlineExceeded) {
-							o.logger.Debug("publishing ipns name timed out")
-						} else {
-							o.logger.Error("publishing ipns name", zap.Error(err))
-						}
-						return
-					}
-
-					o.logger.Debug("published IPNS record for key", zap.Any("RK", path.String()))
-				}()
-			}
 		}
 	}()
 

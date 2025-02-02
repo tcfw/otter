@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,11 +18,13 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	libp2pIPNS "github.com/ipfs/boxo/ipns"
+	"github.com/ipfs/boxo/path"
 	"github.com/ipfs/go-datastore"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	dualdht "github.com/libp2p/go-libp2p-kad-dht/dual"
 	record "github.com/libp2p/go-libp2p-record"
+	libp2pCrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -430,4 +433,137 @@ func (m *mDNSNotifee) HandlePeerFound(peer peer.AddrInfo) {
 	defer cancel()
 
 	m.o.p2p.Connect(ctx, peer)
+}
+
+func (o *Otter) publishIPNS(ctx context.Context) {
+	<-o.WaitForBootstrap(ctx)
+
+	if err := o.publishIPNSRecords(ctx); err != nil {
+		o.logger.Error("initial ipns publish", zap.Error(err))
+	}
+
+	t := time.NewTicker(5 * time.Minute)
+
+	for {
+		select {
+		case <-t.C:
+		case <-o.ctx.Done():
+			t.Stop()
+			return
+		}
+
+		if err := o.publishIPNSRecords(ctx); err != nil {
+			o.logger.Error("ipns publish", zap.Error(err))
+		}
+	}
+}
+
+func (o *Otter) publishIPNSRecords(ctx context.Context) error {
+	keys, err := o.privateKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("getting keys for ipns publish: %w", err)
+	}
+
+	for _, key := range keys {
+		if err := o.publishIPNSForKey(ctx, key); err != nil {
+			o.logger.Error("ipns", zap.Error(err))
+		}
+	}
+
+	return nil
+}
+
+func (o *Otter) publishIPNSForKey(ctx context.Context, key id.PrivateKey) error {
+	pubk, err := key.PublicKey()
+	if err != nil {
+		return fmt.Errorf("getting public key for ipns publish: %w", err)
+	}
+
+	dpk, err := id.DecodeCryptoMaterial(string(key))
+	if err != nil {
+		return fmt.Errorf("decoding private key for ipns publish: %w", err)
+	}
+
+	edpk := dpk.(ed25519.PrivateKey)
+
+	cpk, cppk, err := libp2pCrypto.KeyPairFromStdKey(&edpk)
+	if err != nil {
+		return fmt.Errorf("unmarshalling private key for ipns publish: %w", err)
+	}
+
+	sc, err := o.Storage().Public(pubk)
+	if err != nil {
+		return fmt.Errorf("getting public storage for key for ipns publish: %w", err)
+	}
+
+	wcid, err := sc.Get(ctx, datastore.NewKey("webfinger-cid"))
+	if err != nil {
+		if !errors.Is(err, datastore.ErrNotFound) {
+			return fmt.Errorf("getting webfinger cid: %w", err)
+		}
+
+		//TODO(tcfw): set to empty webfinger
+		wcid = []byte(`/ipfs/baguqeeravj3jdht6ccttqaaritwhorjhcupdyueu72x2q473atcegs4ep3tq`)
+	}
+
+	p, err := path.NewPath(string(wcid))
+	if err != nil {
+		return fmt.Errorf("decoding path for ipns publish: %w", err)
+	}
+
+	rawPeerList, err := sc.Get(ctx, datastore.NewKey("storagePeers"))
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+		return fmt.Errorf("getting storage peer allow list: %w", err)
+	}
+	if rawPeerList == nil {
+		rawPeerList = []byte(`[]`)
+	}
+
+	peerList := []peer.ID{}
+	if err := json.Unmarshal(rawPeerList, &peerList); err != nil {
+		return fmt.Errorf("decoding storage peer list: %w", err)
+	}
+
+	for _, p := range peerList {
+		o.p2p.ConnManager().Protect(p, "storage_syncer")
+	}
+
+	record, err := ipns.NewRecord(cpk, p, 2, time.Now().Add(ipns.DefaultRecordLifetime), ipns.DefaultRecordTTL, ipns.WithOtterNodes(peerList))
+	if err != nil {
+		return fmt.Errorf("encoding ipns record: %w", err)
+	}
+
+	bytes, err := ipns.MarshalRecord(record)
+	if err != nil {
+		return fmt.Errorf("marshalling ipns record: %w", err)
+	}
+
+	pid, err := peer.IDFromPublicKey(cppk)
+	if err != nil {
+		return fmt.Errorf("getting publish ipns name: %w", err)
+	}
+
+	ns := ipns.NameFromPeer(pid)
+	path := ns.AsPath()
+	rk := ns.RoutingKey()
+
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		o.logger.Debug("publishing IPNS record for key", zap.Any("RK", path.String()))
+
+		if err := o.dht.PutValue(ctx, string(rk), bytes); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				o.logger.Debug("publishing ipns name timed out")
+			} else {
+				o.logger.Error("publishing ipns name", zap.Error(err))
+			}
+			return
+		}
+
+		o.logger.Debug("published IPNS record for key", zap.Any("RK", path.String()))
+	}()
+
+	return nil
 }
