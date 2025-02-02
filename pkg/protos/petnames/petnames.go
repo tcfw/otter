@@ -28,7 +28,10 @@ func Register(o otter.Otter) {
 	o.Protocols().RegisterAPIHandlers(func(r *mux.Router) {
 		sr := r.PathPrefix("/petnames/").Subrouter()
 		sr.HandleFunc("/setproposedname", pnh.apiHandle_SetProposedName).Methods(http.MethodPost)
+		sr.HandleFunc("/search", pnh.apiHandle_SearchDHT).Methods(http.MethodGet)
 	})
+
+	go pnh.broadcast()
 }
 
 type PetnamesHandler struct {

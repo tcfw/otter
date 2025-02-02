@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/emersion/go-smtp"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/tcfw/otter/internal/utils"
 	"github.com/tcfw/otter/pkg/id"
 	"github.com/tcfw/otter/pkg/otter"
@@ -23,8 +25,12 @@ import (
 const (
 	smtpGatewayDomain = "pois.pds.directory"
 	tlsCachePrefix    = "acme"
-	lookupTimeout     = 10 * time.Second
-	maxMessageBytes   = 1024 * 1024
+	maxMessageBytes   = 25 * 1024 * 1024 //25 MB
+
+	lookupTimeout   = 10 * time.Second
+	dataReadTimeout = 1 * time.Minute
+
+	smtpRequireTLS = false
 )
 
 type smtpLogger struct {
@@ -44,7 +50,7 @@ func (e *EmailHandler) gwListen() {
 
 	s := smtp.NewServer(be)
 
-	// s.Addr = ":465"
+	s.Addr = ":2525"
 	s.Domain = smtpGatewayDomain
 	s.WriteTimeout = 10 * time.Second
 	s.ReadTimeout = 10 * time.Second
@@ -85,35 +91,43 @@ type Backend struct {
 // NewSession is called after client greeting (EHLO, HELO).
 func (bkd *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 	return &Session{
-		log:  bkd.eh.l.Named("smtp_session"),
-		conn: c,
-		o:    bkd.eh.o,
+		log:       bkd.eh.l.Named("smtp_session"),
+		conn:      c,
+		o:         bkd.eh.o,
+		workQueue: bkd.eh.workQueue,
 	}, nil
 }
 
 // A Session is returned after successful login.
 type Session struct {
-	log  *zap.Logger
-	conn *smtp.Conn
-	o    otter.Otter
+	log           *zap.Logger
+	conn          *smtp.Conn
+	o             otter.Otter
+	resolvedPeers []peer.ID
+	firstPeer     peer.ID
+	workQueue     workQueue
 
 	from string
 	to   string
 }
 
 func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
-	if _, isTLS := s.conn.TLSConnectionState(); !isTLS {
+	if _, isTLS := s.conn.TLSConnectionState(); smtpRequireTLS && !isTLS {
 		s.log.Info("SMTP sender tried to send mail without STARTTLS first")
 		return &smtp.SMTPError{Code: 530, EnhancedCode: smtp.EnhancedCode{5, 7, 0}, Message: "Must issue a STARTTLS command first"}
 	}
 
 	s.from = from
 
+	if opts.Size != 0 && opts.Size > maxMessageBytes {
+		return &smtp.SMTPError{Code: 450, Message: "Body size too large"}
+	}
+
 	return nil
 }
 
 func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
-	if _, isTLS := s.conn.TLSConnectionState(); !isTLS {
+	if _, isTLS := s.conn.TLSConnectionState(); smtpRequireTLS && !isTLS {
 		s.log.Info("SMTP sender tried to send mail without STARTTLS first")
 		return &smtp.SMTPError{Code: 530, EnhancedCode: smtp.EnhancedCode{5, 7, 0}, Message: "Must issue a STARTTLS command first"}
 	}
@@ -147,16 +161,44 @@ func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
 		return &smtp.SMTPError{Code: 450, Message: "No routable nodes found to receive mail"}
 	}
 
+	s.resolvedPeers = peers
+
+	s.firstPeer, err = utils.FirstOnlinePeer(ctx, peers, s.o.Protocols().P2P())
+	if err != nil {
+		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 1}, Message: "No nodes responded"}
+	}
+
 	return nil
 }
 
-func (s *Session) Data(r io.Reader) error {
-	if _, isTLS := s.conn.TLSConnectionState(); !isTLS {
+func (s *Session) Data(envr io.Reader) error {
+	if _, isTLS := s.conn.TLSConnectionState(); smtpRequireTLS && !isTLS {
 		s.log.Info("SMTP sender tried to send mail without STARTTLS first")
 		return &smtp.SMTPError{Code: 530, EnhancedCode: smtp.EnhancedCode{5, 7, 0}, Message: "Must issue a STARTTLS command first"}
 	}
 
-	b, err := io.ReadAll(io.LimitReader(r, maxMessageBytes))
+	ctx, cancel := context.WithTimeout(context.Background(), dataReadTimeout)
+	defer cancel()
+
+	stream, err := s.o.Protocols().P2P().NewStream(ctx, s.firstPeer, protoID)
+	if err != nil {
+		s.log.Error("failed to open stream to remove node", zap.Error(err))
+		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 1}, Message: "Node stream failed to open"}
+	}
+
+	scope := stream.Scope()
+
+	if err := scope.SetService("stmp-gw"); err != nil {
+		s.log.Error("failed to set scope service identifier", zap.Error(err))
+		return err
+	}
+
+	if err := scope.ReserveMemory(maxMessageBytes, network.ReservationPriorityLow); err != nil {
+		s.log.Error("failed to reserve memroy for handling email body", zap.Error(err))
+		return err
+	}
+
+	b, err := io.ReadAll(io.LimitReader(envr, maxMessageBytes))
 	if err != nil {
 		return err
 	}
@@ -164,11 +206,27 @@ func (s *Session) Data(r io.Reader) error {
 	header, err := s.receivedHeader()
 	if err != nil {
 		s.log.Error("making received header", zap.Error(err))
+		return err
 	}
 
 	envelope := fmt.Sprintf("%s\r\n%s", header, string(b))
 
 	s.log.Info("got email", zap.Any("data", envelope), zap.String("env_to", s.to), zap.String("env_from", s.from))
+
+	ip := s.conn.Conn().RemoteAddr().(*net.TCPAddr)
+
+	s.workQueue <- &queueJob{
+		Hello:    s.conn.Hostname(),
+		RemoteIP: *ip,
+		From:     s.from,
+		To:       s.to,
+		Envl:     []byte(envelope),
+		Tries:    1,
+		Release: func() {
+			scope.ReleaseMemory(maxMessageBytes)
+		},
+	}
+
 	return nil
 }
 

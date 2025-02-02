@@ -7,6 +7,7 @@ import (
 	"github.com/tcfw/otter/pkg/keystore"
 
 	"github.com/gorilla/mux"
+	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	ipld "github.com/ipfs/go-ipld-format"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -18,16 +19,46 @@ import (
 )
 
 type Otter interface {
-	Protocols() Protocols
-	Crypto() Cryptography
-	// Settings()
-	Logger(component string) *zap.Logger
-	UI() UI
-	Storage() StorageClasses
+	//Host ID of the underlying node
 	HostID() peer.ID
+
+	//Logger helper for specific component
+	Logger(component string) *zap.Logger
+
+	//Crypto helper functions
+	Crypto() Cryptography
+
+	//IPNS-based resolver for Otter Nodes via public keys
+	ResolveOtterNodesForKey(ctx context.Context, id id.PublicID) ([]peer.ID, error)
+
+	//Public DHT provider helper
+	DHTProvide(ctx context.Context, key cid.Cid, announce bool) error
+
+	//Lookup providers for a CID
+	DHTSearchProviders(ctx context.Context, key cid.Cid, max int) ([]peer.AddrInfo, error)
+
+	//Wait until the node has been fully bootstrapped
+	WaitForBootstrap(ctx context.Context) chan struct{}
+
+	//OS UI bridge
+	UI() UI
+
+	//P2P, API and POIS protocol handlers
+	Protocols() Protocols
+
+	//Private and public storage classes per key,
+	// replicating to all of the key's nodes via CRDT
+	Storage() StorageClasses
+
+	//Private block storage per private key,
+	// distributing amoungst the key's nodes
+	// DistributedStorage(id.PrivateKey) DistributedStorage
+
+	//Public node IPLD service from ipfs-lite
+	//to the underlying node
 	IPLD() ipld.DAGService
 
-	ResolveOtterNodesForKey(context.Context, id.PublicID) ([]peer.ID, error)
+	// Settings()
 }
 
 type Storage interface {
@@ -44,20 +75,37 @@ type StorageClasses interface {
 }
 
 type Protocols interface {
+	//libp2p host
 	P2P() host.Host
+
+	//List of registered protocols
 	Registered() []protocol.ID
 
+	//Register a new libp2p protocol hander
 	RegisterP2PHandler(protocol protocol.ID, handler network.StreamHandler)
+
+	//Remove a libp2p protocol hander
 	UnregisterP2PHandler(protocol protocol.ID)
 
+	//Register a new plain-old-internet-service handler (e.g. HTTPs/SMTP/IMAP etc)
+	//via a single route
 	RegisterPOISHandler(func(r *mux.Route))
+
+	//Register a new plain-old-internet-service handler (e.g. HTTPs/SMTP/IMAP etc)
+	//via a router
 	RegisterPOISHandlers(func(r *mux.Router))
 
+	//Register local API handlers via a route
 	RegisterAPIHandler(func(r *mux.Route))
+
+	//Register local API handlers via a router
 	RegisterAPIHandlers(func(r *mux.Router))
 }
 
 type Cryptography interface {
+	//Returns the hode nodes private key
 	HostKey() (crypto.PrivKey, error)
+
+	//Identity key store
 	KeyStore() keystore.KeyStore
 }

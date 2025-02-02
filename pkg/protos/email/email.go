@@ -1,10 +1,18 @@
 package email
 
 import (
-	"github.com/libp2p/go-libp2p/core/network"
-	"github.com/libp2p/go-libp2p/core/protocol"
+	"errors"
+	"fmt"
+
 	"github.com/tcfw/otter/pkg/otter"
+	"github.com/tcfw/otter/pkg/protos/email/pb"
+
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-msgio/pbio"
 	"go.uber.org/zap"
+	protobuf "google.golang.org/protobuf/proto"
 )
 
 const (
@@ -35,4 +43,96 @@ type EmailHandler struct {
 }
 
 func (e *EmailHandler) handle(s network.Stream) {
+	if err := s.Scope().SetService(string(protoID)); err != nil {
+		e.l.Error("failed to set scope service identifier", zap.Error(err))
+		return
+	}
+
+	if err := s.Scope().ReserveMemory(maxMessageBytes, network.ReservationPriorityMedium); err != nil {
+		e.l.Error("failed to reserve memroy for handling email body", zap.Error(err))
+		return
+	}
+	defer s.Scope().ReleaseMemory(maxMessageBytes)
+
+	r := pbio.NewDelimitedReader(s, maxMessageBytes)
+	w := pbio.NewDelimitedWriter(s)
+
+	req := &pb.Request{}
+
+	if err := r.ReadMsg(req); err != nil {
+		e.l.Error("reading req", zap.Error(err))
+		return
+	}
+
+	resp := &pb.Response{}
+
+	err := e.handleRequest(s.Conn().RemotePeer(), req)
+	if err != nil {
+		resp.Error = err.Error()
+	}
+
+	if err := w.WriteMsg(resp); err != nil {
+		e.l.Error("writing response", zap.Error(err))
+		return
+	}
+}
+
+func (e *EmailHandler) handleRequest(p peer.ID, req *pb.Request) error {
+	if req.PublicID != p.String() {
+		return errors.New("public ID mismatch")
+	}
+
+	if err := e.validateSignature(p, req); err != nil {
+		return fmt.Errorf("invalid signature: %w", err)
+	}
+
+	switch req.Data.(type) {
+	case *pb.Request_ReceiveEmail:
+		err := e.handleReceiveEmail(req.GetReceiveEmail())
+		if err != nil {
+			return err
+		}
+	default:
+		return errors.New("unknown request type")
+	}
+
+	return nil
+}
+
+func (e *EmailHandler) validateSignature(p peer.ID, req *pb.Request) error {
+	var msg protobuf.Message
+
+	switch t := req.Data.(type) {
+	case *pb.Request_ReceiveEmail:
+		msg = t.ReceiveEmail
+	default:
+		return errors.New("unknown data type")
+	}
+
+	d, err := protobuf.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	pk, err := p.ExtractPublicKey()
+	if err != nil {
+		return err
+	}
+
+	ok, err := pk.Verify(d, req.Signature)
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		return errors.New("invalid signature")
+	}
+
+	return nil
+}
+
+func (e *EmailHandler) handleReceiveEmail(req *pb.ReceiveEmail) error {
+	e.l.Info("got email", zap.Any("req", req))
+
+	return nil
 }

@@ -47,16 +47,7 @@ var (
 	}
 )
 
-var connMgr, _ = connmgr.NewConnManager(50, 400, connmgr.WithGracePeriod(30*time.Second))
-
-// Libp2pOptionsExtra provides some useful libp2p options
-// to create a fully featured libp2p host. It can be used with
-// SetupLibp2p.
-var Libp2pOptionsExtra = []libp2p.Option{
-	libp2p.ConnectionManager(connMgr),
-	libp2p.EnableRelay(),
-	libp2p.EnableRelayService(),
-}
+var connMgr, _ = connmgr.NewConnManager(20, 100, connmgr.WithGracePeriod(60*time.Second))
 
 func (o *Otter) Registered() []protocol.ID {
 	return o.p2p.Mux().Protocols()
@@ -109,15 +100,18 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 	}
 
 	finalOpts := []libp2p.Option{
-		libp2p.ResourceManager(o.rm),
 		libp2p.UserAgent("otter/" + version.Version()),
 		libp2p.Identity(hostKey),
 		libp2p.ListenAddrs(listenAddrs...),
+		libp2p.ResourceManager(o.rm),
+		libp2p.ConnectionManager(connMgr),
 		transports,
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			ddht, err = newDHT(o.ctx, h, o.ds)
 			return ddht, err
 		}),
+		libp2p.EnableRelay(),
+		libp2p.EnableRelayService(),
 		libp2p.EnableAutoRelayWithPeerSource(o.dhtPeerSource, autorelay.WithMinInterval(5*time.Minute)),
 	}
 	finalOpts = append(finalOpts, opts...)
@@ -166,6 +160,11 @@ func newDHT(ctx context.Context, h host.Host, ds datastore.Batching) (*dualdht.D
 	return dualdht.New(ctx, h, dhtOpts...)
 }
 
+var (
+	bootstrappedWaiters = sync.NewCond(&sync.Mutex{})
+	bootstrapped        bool
+)
+
 func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 	if len(peers) == 0 {
 		ps, err := parseBootstrapPeers(defaultBootstrapPeers)
@@ -211,6 +210,41 @@ func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 		fmt.Print(err)
 		return
 	}
+
+	bootstrapped = true
+	bootstrappedWaiters.Broadcast()
+}
+
+func (o *Otter) WaitForBootstrap(ctx context.Context) chan struct{} {
+	ch := make(chan struct{})
+
+	go func() {
+		defer close(ch)
+
+		for {
+			if bootstrapped {
+				return
+			}
+
+			bootstrappedWaiters.L.Lock()
+			defer bootstrappedWaiters.L.Unlock()
+
+			inch := make(chan struct{})
+			go func() {
+				defer close(inch)
+
+				bootstrappedWaiters.Wait()
+			}()
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-inch:
+			}
+		}
+	}()
+
+	return ch
 }
 
 func (o *Otter) ResolveOtterNodesForKey(ctx context.Context, pubk id.PublicID) ([]peer.ID, error) {

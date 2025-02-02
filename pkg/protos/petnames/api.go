@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/ipfs/go-datastore"
@@ -97,7 +98,7 @@ func (sc *scopedClient) ListLocalContacts(ctx context.Context, pub id.PublicID) 
 	return nil, errors.New("not implemented")
 }
 
-func (sc *scopedClient) SearchLocalContacts(ctx context.Context, pub string) ([]Contact, error) {
+func (sc *scopedClient) SearchLocalContacts(ctx context.Context, query string) ([]Contact, error) {
 	return nil, errors.New("not implemented")
 }
 
@@ -132,6 +133,37 @@ func (p *PetnamesHandler) apiHandle_SetProposedName(w http.ResponseWriter, r *ht
 	}
 
 	if err := sc.SetProposedName(req.Name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+func (p *PetnamesHandler) apiHandle_SearchDHT(w http.ResponseWriter, r *http.Request) {
+	val := r.URL.Query().Get("v")
+	limitStr := r.URL.Query().Get("l")
+
+	if val == "" {
+		http.Error(w, "value (v) param was empty", http.StatusBadRequest)
+		return
+	}
+
+	if limitStr == "" {
+		limitStr = "10"
+	}
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	provs, err := p.Search(r.Context(), val, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(provs); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
