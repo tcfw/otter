@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package ident4;
+
+option go_package = "github.com/tcfw/otter/internal/ident4/pb";
+
+enum ErrorCode {
+	UNKNOWN = 0;
+
+	UNKNOWN_DEST_PUBLIC_ID = 1;
+	UNKNOWN_DEST_PROTO = 2;
+
+	BAD_PUBLIC_ID = 3;
+	BAD_SIGNATURE = 4;
+	BAD_RANDOM = 5;
+
+	GO_AWAY = 6;
+}
+
+message Message {
+	oneof packet {
+		Hello hello = 1;
+		HelloSig helloSig = 2;
+		Sig okSig = 3;
+		Ok ok = 4;
+		Error error = 5;
+	}
+}
+
+message Hello {
+	bytes random = 1;
+	string srcPublicID = 2;
+	string destPublicID = 3;
+	string nextProto = 4;
+}
+
+message HelloSig {
+	bytes random = 1;
+	Sig sig = 2;
+}
+
+message Sig {
+	bytes signature = 1;
+}
+
+message Ok {}
+
+message Error {
+	ErrorCode code = 1;
+	string msg = 2;
+}

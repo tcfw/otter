@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	stdCrypto "crypto"
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/hex"
@@ -406,4 +407,41 @@ func (o *Otter) apiHandle_Keys_Sign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	o.apiJSONResponse(w, v1api.SignResponse{Sig: sig})
+}
+
+func (o *Otter) Sign(ctx context.Context, p id.PublicID, data []byte, hasher stdCrypto.Hash) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, errors.New("no data supplied")
+	}
+
+	if p == "" {
+		return nil, errors.New("no publicID supplied")
+	}
+
+	ss, err := o.sc.System()
+	if err != nil {
+		return nil, err
+	}
+
+	keyRef := systemPrefix_Keys + string(p)
+
+	ok, err := ss.Has(ctx, datastore.NewKey(keyRef))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("key does not exist")
+	}
+
+	rpk, err := ss.Get(ctx, datastore.NewKey(keyRef))
+	if err != nil {
+		return nil, err
+	}
+
+	sig, err := id.Sign(id.PrivateKey(rpk), data, hasher)
+	if err != nil {
+		return nil, err
+	}
+
+	return sig, nil
 }

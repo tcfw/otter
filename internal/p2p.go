@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -36,6 +37,8 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
+
+	mmux "github.com/multiformats/go-multistream"
 )
 
 var (
@@ -138,6 +141,28 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 	}
 	o.p2p = h
 	o.dht = ddht
+
+	go func() {
+		time.Sleep(5 * time.Second)
+
+		w, r := net.Pipe()
+		defer r.Close()
+		defer w.Close()
+
+		go func() {
+			if _, err := mmux.SelectOneOf[protocol.ID]([]protocol.ID{protocol.ID("/otter/email/0.0.1")}, w); err != nil {
+				o.logger.Error("failed to nego proto", zap.Error(err))
+			}
+		}()
+
+		proto, _, err := o.p2p.Mux().Negotiate(r)
+		if err != nil {
+			o.logger.Error("failed to nego proto in server", zap.Error(err))
+			return
+		}
+
+		o.logger.Info("success nego proto", zap.Any("proto", proto))
+	}()
 
 	return nil
 }

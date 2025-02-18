@@ -6,7 +6,7 @@ BUILD_TIMESTAMP=$(shell date '+%Y-%m-%dT%H:%M:%S')
 LDFLAGS=-X '${PACKAGE}/internal/version.version=${VERSION}' -X '${PACKAGE}/internal/version.commitHash=${COMMIT_HASH}' -X '${PACKAGE}/internal/version.buildTime=${BUILD_TIMESTAMP}'
 PLUGINS=$(shell ls ./pkg/protos/)
 
-PROTOBUFS=$(shell find ./pkg/protos -iname "*.proto")
+PROTOBUFS=$(shell find ./pkg/protos -iname "*.proto") $(shell find ./internal -iname "*.proto")
 
 .PHONY: run
 run:
