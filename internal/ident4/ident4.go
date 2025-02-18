@@ -26,18 +26,14 @@ const (
 	randSize = 32
 )
 
-var (
-	defaultClient *ident4
-)
-
-type ident4 struct {
+type Ident4 struct {
 	h host.Host
 	c otter.Cryptography
 	l *zap.Logger
 }
 
 func Setup(h host.Host, l *zap.Logger, c otter.Cryptography) error {
-	i4 := &ident4{h, c, l}
+	i4 := &Ident4{h, c, l}
 
 	h.SetStreamHandler(protoID, i4.handleStream)
 

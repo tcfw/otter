@@ -39,8 +39,6 @@ func TestHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// i4h2 := defaultClient
-
 	ping.NewPingService(h2)
 
 	_, pub1, priv1, err := id.NewKey("")

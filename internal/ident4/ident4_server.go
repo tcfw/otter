@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"time"
 
 	"github.com/tcfw/otter/internal/ident4/pb"
 	"github.com/tcfw/otter/pkg/id"
@@ -17,7 +18,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (i4 *ident4) handleStream(s network.Stream) {
+func (i4 *Ident4) handleStream(s network.Stream) {
 	i4.l.Debug("new ident4 stream", zap.Any("peer", s.Conn().RemotePeer()))
 
 	if err := s.Scope().SetService(serviceName); err != nil {
@@ -33,7 +34,7 @@ func (i4 *ident4) handleStream(s network.Stream) {
 	}
 	defer s.Scope().ReleaseMemory(maxMessageSize)
 
-	// s.SetReadDeadline(time.Now().Add(streamTimeout))
+	s.SetReadDeadline(time.Now().Add(streamTimeout))
 
 	ctx, cancel := context.WithTimeout(context.Background(), streamTimeout)
 	defer cancel()
@@ -100,12 +101,12 @@ func (i4 *ident4) handleStream(s network.Stream) {
 		return
 	}
 
-	// s.SetReadDeadline(time.Time{})
+	s.SetReadDeadline(time.Time{})
 
 	i4.upgradeStream(s, state)
 }
 
-func (i4 *ident4) upgradeStream(stream network.Stream, state *state) {
+func (i4 *Ident4) upgradeStream(stream network.Stream, state *state) {
 	w, r := net.Pipe()
 	defer r.Close()
 	defer w.Close()

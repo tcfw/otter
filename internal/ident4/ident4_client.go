@@ -12,11 +12,23 @@ import (
 	"github.com/tcfw/otter/pkg/id"
 )
 
-func (i4 *ident4) Dial(peer peer.ID, proto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error) {
+var (
+	defaultClient *Ident4
+)
+
+func Dial(peer peer.ID, proto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error) {
+	return defaultClient.DialContext(context.Background(), peer, proto, remote, local)
+}
+
+func DialContext(ctx context.Context, peer peer.ID, proto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error) {
+	return defaultClient.DialContext(ctx, peer, proto, remote, local)
+}
+
+func (i4 *Ident4) Dial(peer peer.ID, proto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error) {
 	return i4.DialContext(context.Background(), peer, proto, remote, local)
 }
 
-func (i4 *ident4) DialContext(ctx context.Context, peer peer.ID, proto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error) {
+func (i4 *Ident4) DialContext(ctx context.Context, peer peer.ID, proto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error) {
 	stream, err := i4.h.NewStream(ctx, peer, protoID)
 	if err != nil {
 		return nil, err
@@ -30,7 +42,7 @@ func (i4 *ident4) DialContext(ctx context.Context, peer peer.ID, proto protocol.
 	return upgradedStream, nil
 }
 
-func (i4 *ident4) handshakeClient(ctx context.Context, s network.Stream, nextProto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error) {
+func (i4 *Ident4) handshakeClient(ctx context.Context, s network.Stream, nextProto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error) {
 	state := &state{
 		i4: i4,
 		hello: &pb.Hello{

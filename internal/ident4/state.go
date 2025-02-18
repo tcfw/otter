@@ -16,7 +16,7 @@ import (
 )
 
 type state struct {
-	i4 *ident4
+	i4 *Ident4
 
 	hello    *pb.Hello
 	helloSig *pb.HelloSig
@@ -27,7 +27,7 @@ type state struct {
 	destIdent id.PublicID
 
 	writeBuff []byte
-	readBuff *bufio.Reader
+	readBuff  *bufio.Reader
 }
 
 func (s *state) validateHello(ctx context.Context) error {
