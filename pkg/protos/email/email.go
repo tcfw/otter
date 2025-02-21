@@ -21,7 +21,9 @@ const (
 )
 
 var (
-	eh = &EmailHandler{}
+	eh = &EmailHandler{
+		workQueue: make(workQueue, 100),
+	}
 )
 
 func Register(o otter.Otter) {

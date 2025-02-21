@@ -177,24 +177,30 @@ func (s *Session) Data(envr io.Reader) error {
 		return &smtp.SMTPError{Code: 530, EnhancedCode: smtp.EnhancedCode{5, 7, 0}, Message: "Must issue a STARTTLS command first"}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), dataReadTimeout)
-	defer cancel()
+	// ctx, cancel := context.WithTimeout(context.Background(), dataReadTimeout)
+	// defer cancel()
 
-	stream, err := s.o.Protocols().P2P().NewStream(ctx, s.firstPeer, protoID)
+	// stream, err := s.o.Protocols().P2P().NewStream(ctx, s.firstPeer, protoID)
+	// if err != nil {
+	// 	s.log.Error("failed to open stream to remove node", zap.Error(err))
+	// 	return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 1}, Message: "Node stream failed to open"}
+	// }
+
+	// scope := stream.Scope()
+
+	var done func()
+
+	err := s.o.Protocols().P2P().Network().ResourceManager().ViewProtocol(protoID, func(ps network.ProtocolScope) error {
+		if err := ps.ReserveMemory(maxMessageBytes, network.ReservationPriorityMedium); err != nil {
+			return err
+		}
+
+		done = func() { ps.ReleaseMemory(maxMessageBytes) }
+
+		return nil
+	})
 	if err != nil {
-		s.log.Error("failed to open stream to remove node", zap.Error(err))
-		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 4, 1}, Message: "Node stream failed to open"}
-	}
-
-	scope := stream.Scope()
-
-	if err := scope.SetService("stmp-gw"); err != nil {
-		s.log.Error("failed to set scope service identifier", zap.Error(err))
-		return err
-	}
-
-	if err := scope.ReserveMemory(maxMessageBytes, network.ReservationPriorityLow); err != nil {
-		s.log.Error("failed to reserve memroy for handling email body", zap.Error(err))
+		s.log.Error("failed to reserve scope for handling email body", zap.Error(err))
 		return err
 	}
 
@@ -211,8 +217,6 @@ func (s *Session) Data(envr io.Reader) error {
 
 	envelope := fmt.Sprintf("%s\r\n%s", header, string(b))
 
-	s.log.Info("got email", zap.Any("data", envelope), zap.String("env_to", s.to), zap.String("env_from", s.from))
-
 	ip := s.conn.Conn().RemoteAddr().(*net.TCPAddr)
 
 	s.workQueue <- &queueJob{
@@ -222,9 +226,7 @@ func (s *Session) Data(envr io.Reader) error {
 		To:       s.to,
 		Envl:     []byte(envelope),
 		Tries:    1,
-		Release: func() {
-			scope.ReleaseMemory(maxMessageBytes)
-		},
+		Release:  done,
 	}
 
 	return nil

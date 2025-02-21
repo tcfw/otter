@@ -9,6 +9,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-msgio/pbio"
+	"github.com/tcfw/otter/internal/ident4"
 	"github.com/tcfw/otter/internal/utils"
 	"github.com/tcfw/otter/pkg/id"
 	"github.com/tcfw/otter/pkg/protos/email/pb"
@@ -48,18 +49,21 @@ func (eh *EmailHandler) worker(id int) {
 		err := eh.handleJob(job)
 		if err != nil {
 			eh.l.Error("handling email", zap.Any("worker", id), zap.Error(err))
+
 			go func() {
 				time.Sleep(1 * time.Second)
+
 				job.Tries++
 				eh.workQueue <- job
 			}()
+		} else {
+			job.Release()
 		}
-
 	}
 }
 
 func (eh *EmailHandler) handleJobExpired(job *queueJob) {
-
+	defer job.Release()
 }
 
 func (eh *EmailHandler) handleJob(job *queueJob) error {
@@ -76,7 +80,9 @@ func (eh *EmailHandler) handleJob(job *queueJob) error {
 		return err
 	}
 
-	peers, err := eh.o.ResolveOtterNodesForKey(ctx, id.PublicID(publicID))
+	pid := id.PublicID(publicID)
+
+	peers, err := eh.o.ResolveOtterNodesForKey(ctx, pid)
 	if err != nil {
 		return err
 	}
@@ -86,7 +92,7 @@ func (eh *EmailHandler) handleJob(job *queueJob) error {
 		return err
 	}
 
-	return eh.sendEnvlToPeer(ctx, job, p)
+	return eh.sendEnvlToPeer(ctx, job, p, pid)
 }
 
 func (eh *EmailHandler) signRequest(req *pb.Request) error {
@@ -119,7 +125,7 @@ func (eh *EmailHandler) signRequest(req *pb.Request) error {
 	return nil
 }
 
-func (eh *EmailHandler) sendEnvlToPeer(ctx context.Context, job *queueJob, p peer.ID) error {
+func (eh *EmailHandler) sendEnvlToPeer(ctx context.Context, job *queueJob, p peer.ID, pid id.PublicID) error {
 	req := &pb.Request{
 		PublicID: eh.o.HostID().String(),
 		Data: &pb.Request_ReceiveEmail{
@@ -142,7 +148,8 @@ func (eh *EmailHandler) sendEnvlToPeer(ctx context.Context, job *queueJob, p pee
 		return eh.handleRequest(p, req)
 	}
 
-	stream, err := eh.o.Protocols().P2P().NewStream(ctx, p, protoID)
+	//eh.o.Protocols().P2P().NewStream(ctx, p, protoID)
+	stream, err := ident4.DialContext(ctx, p, protoID, pid, id.PublicID(eh.o.HostID().String()))
 	if err != nil {
 		return err
 	}

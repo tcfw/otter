@@ -24,7 +24,14 @@ func FirstOnlinePeer(ctx context.Context, peers []peer.ID, h host.Host) (peer.ID
 			<-ping.Ping(ctx, h, peer)
 
 			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			select {
 			case res <- peer:
+			case <-ctx.Done():
 			default:
 			}
 		}()
