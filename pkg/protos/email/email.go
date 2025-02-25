@@ -90,7 +90,7 @@ func (e *EmailHandler) handleRequest(p peer.ID, req *pb.Request) error {
 
 	switch req.Data.(type) {
 	case *pb.Request_ReceiveEmail:
-		err := e.handleReceiveEmail(req.GetReceiveEmail())
+		err := e.handleReceiveEmail(p, req.GetReceiveEmail())
 		if err != nil {
 			return err
 		}
@@ -133,8 +133,18 @@ func (e *EmailHandler) validateSignature(p peer.ID, req *pb.Request) error {
 	return nil
 }
 
-func (e *EmailHandler) handleReceiveEmail(req *pb.ReceiveEmail) error {
-	e.l.Info("got email", zap.Any("req", req))
+func (e *EmailHandler) handleReceiveEmail(p peer.ID, req *pb.ReceiveEmail) error {
+	spamPrependStr, isSpam, err := e.checkSpam(p, req)
+	if err != nil {
+		return err
+	}
 
+	req.Envelope = []byte(fmt.Sprintf("Authentication-Results: %s\r\n%s", spamPrependStr, req.Envelope))
+
+	if isSpam {
+		e.l.Warn("SPAM MSG", zap.Any("spam result", spamPrependStr))
+	}
+
+	e.l.Info("got email", zap.String("msg", string(req.Envelope)))
 	return nil
 }

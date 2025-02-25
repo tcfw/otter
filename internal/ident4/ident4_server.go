@@ -113,13 +113,13 @@ func (i4 *Ident4) upgradeStream(stream network.Stream, state *state) {
 
 	go func() {
 		if _, err := mmux.SelectOneOf[protocol.ID]([]protocol.ID{state.nextProto}, w); err != nil {
-			i4.l.Error("failed to nego proto", zap.Error(err))
+			i4.l.Error("failed to negotiate proto", zap.Error(err))
 		}
 	}()
 
 	proto, handle, err := i4.h.Mux().Negotiate(r)
 	if err != nil {
-		i4.l.Error("failed to nego proto in server", zap.Error(err))
+		i4.l.Error("failed to negotiate proto in server", zap.Error(err))
 		return
 	}
 

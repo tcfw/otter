@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/mail"
-	"os"
 	"strings"
 	"time"
 
@@ -145,6 +144,11 @@ func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
 		return &smtp.SMTPError{Code: 553, Message: "Mailbox name not allowed"}
 	}
 
+	if strings.Contains(publicID, "+") {
+		parts := strings.SplitN(publicID, "+", 2)
+		publicID = parts[0]
+	}
+
 	s.to = to
 
 	//eager lookup - don't connect yet, just see if it's routable
@@ -257,10 +261,7 @@ func (s *Session) receivedHeader() (string, error) {
 		envlFor = fmt.Sprintf("<%s>", envlFor)
 	}
 
-	localHostname, err := os.Hostname()
-	if err != nil {
-		return "", fmt.Errorf("getting hostname: %w", err)
-	}
+	localHostname := s.o.HostID().String()
 	with := "ESMTP"
 
 	now := time.Now().Format(time.RFC1123)
