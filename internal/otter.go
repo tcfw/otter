@@ -12,6 +12,7 @@ import (
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/go-datastore"
 	ipld "github.com/ipfs/go-ipld-format"
+	p2pforge "github.com/ipshipyard/p2p-forge/client"
 	dualdht "github.com/libp2p/go-libp2p-kad-dht/dual"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/event"
@@ -42,6 +43,8 @@ type Otter struct {
 	ds datastore.Batching
 
 	sc *StorageClasses
+
+	autotlsCM *p2pforge.P2PForgeCertMgr
 
 	apiRouter  *mux.Router
 	poisRouter *mux.Router
@@ -180,6 +183,8 @@ func (o *Otter) HostID() peer.ID {
 }
 
 func (o *Otter) Stop() error {
+	o.autotlsCM.Stop()
+
 	if err := o.mdns.Close(); err != nil {
 		o.logger.Error("stopping mdns discovery service", zap.Error(err))
 	}

@@ -123,10 +123,6 @@ func (i4 *Ident4) upgradeStream(stream network.Stream, state *state) {
 		return
 	}
 
-	// mux := i4.h.Mux().(*mmux.MultistreamMuxer[protocol.ID])
-
-	// handle, ok := mux.Handle()
-
 	if proto != state.nextProto {
 		stream.Close()
 		return

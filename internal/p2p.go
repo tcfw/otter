@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/caddyserver/certmagic"
 	"github.com/tcfw/otter/internal/version"
 	v1api "github.com/tcfw/otter/pkg/api"
 	"github.com/tcfw/otter/pkg/config"
@@ -20,6 +21,7 @@ import (
 	libp2pIPNS "github.com/ipfs/boxo/ipns"
 	"github.com/ipfs/boxo/path"
 	"github.com/ipfs/go-datastore"
+	p2pforge "github.com/ipshipyard/p2p-forge/client"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	dualdht "github.com/libp2p/go-libp2p-kad-dht/dual"
@@ -34,6 +36,11 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	libp2pwebrtc "github.com/libp2p/go-libp2p/p2p/transport/webrtc"
+	ws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
+	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
 )
@@ -67,7 +74,38 @@ func (o *Otter) UnregisterP2PHandler(protocol protocol.ID) {
 func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 	var ddht *dualdht.DHT
 	var err error
-	var transports = libp2p.DefaultTransports
+
+	certManager, err := p2pforge.NewP2PForgeCertMgr(
+		// Configure CA ACME endpoint
+		// NOTE:
+		// This example uses Let's Encrypt staging CA (p2pforge.DefaultCATestEndpoint)
+		// which will not work correctly in browser, but is useful for initial testing.
+		// Production should use Let's Encrypt production CA (p2pforge.DefaultCAEndpoint).
+		// p2pforge.WithCAEndpoint(p2pforge.DefaultCATestEndpoint), // test CA endpoint
+		p2pforge.WithCAEndpoint(p2pforge.DefaultCAEndpoint), // production CA endpoint
+
+		// Configure where to store certificate
+		p2pforge.WithCertificateStorage(&certmagic.FileStorage{Path: "p2p-forge-certs"}),
+
+		// Configure logger to use
+		p2pforge.WithLogger(o.logger.Sugar().Named("autotls")),
+
+		// User-Agent to use during DNS-01 ACME challenge
+		p2pforge.WithUserAgent("otter/"+version.Version()),
+		p2pforge.WithOnCertLoaded(func() {
+			o.logger.Warn("CERT LOADED")
+		}),
+		p2pforge.WithOnCertRenewed(func() {
+			o.logger.Warn("CERT RENEWED")
+		}),
+	)
+	if err != nil {
+		return err
+	}
+	o.autotlsCM = certManager
+	if err := certManager.Start(); err != nil {
+		return err
+	}
 
 	addrs := o.GetConfigAs([]string{}, config.P2P_ListenAddrs).([]string)
 	listenAddrs := make([]multiaddr.Multiaddr, len(addrs))
@@ -78,6 +116,17 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 		}
 		listenAddrs[i] = a
 	}
+
+	autoTLSip4, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/0.0.0.0/tcp/9696/tls/sni/*.%s/ws", p2pforge.DefaultForgeDomain))
+	if err != nil {
+		return err
+	}
+	autoTLSip6, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip6/::/tcp/9696/tls/sni/*.%s/ws", p2pforge.DefaultForgeDomain))
+	if err != nil {
+		return err
+	}
+
+	listenAddrs = append(listenAddrs, autoTLSip4, autoTLSip6)
 
 	hostKey, err := o.HostKey()
 	if err != nil {
@@ -108,7 +157,12 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 		libp2p.ListenAddrs(listenAddrs...),
 		libp2p.ResourceManager(o.rm),
 		libp2p.ConnectionManager(connMgr),
-		transports,
+		libp2p.Transport(tcp.NewTCPTransport),
+		libp2p.Transport(quic.NewTransport),
+		libp2p.Transport(webtransport.New),
+		libp2p.Transport(libp2pwebrtc.New),
+		libp2p.Transport(ws.New, ws.WithTLSConfig(certManager.TLSConfig())),
+		libp2p.ShareTCPListener(),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			ddht, err = newDHT(o.ctx, h, o.ds)
 			return ddht, err
@@ -116,6 +170,7 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 		libp2p.EnableRelay(),
 		libp2p.EnableRelayService(),
 		libp2p.EnableAutoRelayWithPeerSource(o.dhtPeerSource, autorelay.WithMinInterval(5*time.Minute)),
+		libp2p.AddrsFactory(certManager.AddressFactory()),
 	}
 	finalOpts = append(finalOpts, opts...)
 
@@ -138,6 +193,7 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 	}
 	o.p2p = h
 	o.dht = ddht
+	certManager.ProvideHost(h)
 
 	return nil
 }
