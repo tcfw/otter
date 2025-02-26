@@ -117,11 +117,11 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 		listenAddrs[i] = a
 	}
 
-	autoTLSip4, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/0.0.0.0/tcp/9696/tls/sni/*.%s/ws", p2pforge.DefaultForgeDomain))
+	autoTLSip4, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/0.0.0.0/tcp/9695/tls/sni/*.%s/ws", p2pforge.DefaultForgeDomain))
 	if err != nil {
 		return err
 	}
-	autoTLSip6, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip6/::/tcp/9696/tls/sni/*.%s/ws", p2pforge.DefaultForgeDomain))
+	autoTLSip6, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip6/::/tcp/9695/tls/sni/*.%s/ws", p2pforge.DefaultForgeDomain))
 	if err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 		libp2p.Transport(webtransport.New),
 		libp2p.Transport(libp2pwebrtc.New),
 		libp2p.Transport(ws.New, ws.WithTLSConfig(certManager.TLSConfig())),
-		libp2p.ShareTCPListener(),
+		// libp2p.ShareTCPListener(),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			ddht, err = newDHT(o.ctx, h, o.ds)
 			return ddht, err

@@ -74,7 +74,7 @@ func (p *PetnamesHandler) broadcast() {
 		pnh.l.Error("initially broadcasting names", zap.Error(err))
 	}
 
-	t := time.NewTimer(broadcastReprovideInternal)
+	t := time.NewTicker(broadcastReprovideInternal)
 	for range t.C {
 		err := p.broadcastNames()
 		if err != nil {
