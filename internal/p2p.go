@@ -88,7 +88,7 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 		p2pforge.WithCertificateStorage(&certmagic.FileStorage{Path: "p2p-forge-certs"}),
 
 		// Configure logger to use
-		p2pforge.WithLogger(o.logger.Sugar().Named("autotls")),
+		p2pforge.WithLogger(o.logger.Sugar().Named("autotls").WithOptions(zap.IncreaseLevel(zap.ErrorLevel))),
 
 		// User-Agent to use during DNS-01 ACME challenge
 		p2pforge.WithUserAgent("otter/"+version.Version()),
@@ -102,6 +102,7 @@ func (o *Otter) setupLibP2P(opts ...libp2p.Option) error {
 	if err != nil {
 		return err
 	}
+
 	o.autotlsCM = certManager
 	if err := certManager.Start(); err != nil {
 		return err
