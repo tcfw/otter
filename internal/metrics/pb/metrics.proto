@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package metrics;
+
+option go_package = "github.com/tcfw/otter/internal/metrics/pb";
+
+message Set {
+	map<string, SetType > collection = 1;
+}
+
+message SetType {
+	oneof value {
+		string stringValue = 1;
+		int64 intValue = 2;
+	} 
+}

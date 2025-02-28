@@ -22,15 +22,28 @@ var (
 )
 
 func (o *Otter) setupPubSub(ctx context.Context) error {
+	disco := &DHTPubSubDiscovery{o}
+
 	psub, err := pubsub.NewGossipSub(ctx, o.p2p,
 		pubsub.WithPeerFilter(o.pubsubChainFilter),
-		pubsub.WithDiscovery(&DHTPubSubDiscovery{o}, pubsub.WithDiscoveryOpts(discovery.TTL(30*time.Second))),
-		pubsub.WithSeenMessagesTTL(3*time.Minute),
+		pubsub.WithDiscovery(disco, pubsub.WithDiscoveryOpts(discovery.TTL(30*time.Second))),
+		pubsub.WithSeenMessagesTTL(20*time.Minute),
+		pubsub.WithMessageSigning(true),
 	)
 	if err != nil {
-		return fmt.Errorf("initing pubsub: %w", err)
+		return fmt.Errorf("initing private pubsub: %w", err)
 	}
 	o.pubsub = psub
+
+	ppsub, err := pubsub.NewGossipSub(ctx, o.p2p,
+		pubsub.WithDiscovery(disco, pubsub.WithDiscoveryOpts(discovery.TTL(1*time.Second))),
+		pubsub.WithSeenMessagesTTL(2*time.Minute),
+	)
+	if err != nil {
+		return fmt.Errorf("initing public pubsub: %w", err)
+	}
+
+	o.publicPubsub = ppsub
 
 	pubsubPeerFilters = append(pubsubPeerFilters, o.syncerPubSubFilter)
 

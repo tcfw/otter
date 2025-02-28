@@ -118,7 +118,7 @@ func (sc *StorageClasses) Private(pk id.PrivateKey) (datastore.Datastore, error)
 		return nil, fmt.Errorf("getting account syncer: %w", err)
 	}
 
-	sk, err := privateKeytoStorageKey(pk)
+	sk, err := privateKeytoStorageKey(pk, nil)
 	if err != nil {
 		return nil, fmt.Errorf("getting storage key: %w", err)
 	}

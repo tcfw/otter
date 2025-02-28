@@ -200,8 +200,12 @@ func privateStorageUnseal(ci cipher.AEAD, ad []byte) cryptoSealUnSeal {
 }
 
 // privateKeytoStorageKey outputs a HKDF of at least 32 bytes to be used for storage/block encryption against the key
-func privateKeytoStorageKey(pk id.PrivateKey) ([]byte, error) {
-	r := hkdf.Expand(sha3.New512, []byte(pk), []byte("StorageKey"))
+func privateKeytoStorageKey(pk id.PrivateKey, purpose []byte) ([]byte, error) {
+	if purpose == nil {
+		purpose = []byte("StorageKey")
+	}
+
+	r := hkdf.Expand(sha3.New512, []byte(pk), purpose)
 
 	sk := make([]byte, storageKeyLen)
 	n, err := r.Read(sk)
@@ -444,4 +448,95 @@ func (o *Otter) Sign(ctx context.Context, p id.PublicID, data []byte, hasher std
 	}
 
 	return sig, nil
+}
+
+func (o *Otter) getPK(ctx context.Context, p id.PublicID) (id.PrivateKey, error) {
+	ss, err := o.sc.System()
+	if err != nil {
+		return id.PrivateKey(""), err
+	}
+
+	keyRef := systemPrefix_Keys + string(p)
+
+	ok, err := ss.Has(ctx, datastore.NewKey(keyRef))
+	if err != nil {
+		return id.PrivateKey(""), err
+	}
+	if !ok {
+		return id.PrivateKey(""), errors.New("key does not exist")
+	}
+
+	rpk, err := ss.Get(ctx, datastore.NewKey(keyRef))
+	if err != nil {
+		return id.PrivateKey(""), err
+	}
+
+	return id.PrivateKey(rpk), nil
+}
+
+func (o *Otter) PrivateSeal(ctx context.Context, p id.PublicID, data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, errors.New("no data supplied")
+	}
+
+	if p == "" {
+		return nil, errors.New("no publicID supplied")
+	}
+
+	rpk, err := o.getPK(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+
+	sk, err := privateKeytoStorageKey(id.PrivateKey(rpk), []byte("genericSeal"))
+	if err != nil {
+		return nil, fmt.Errorf("getting storage key: %w", err)
+	}
+
+	aead, err := privateStorageAEAD(sk)
+	if err != nil {
+		return nil, fmt.Errorf("creating AEAD: %w", err)
+	}
+
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+
+	ct := aead.Seal(nil, nonce, data, []byte(p))
+	nonce = append(nonce, ct...)
+
+	return nonce, nil
+}
+
+func (o *Otter) PrivateUnseal(ctx context.Context, p id.PublicID, data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, errors.New("no data supplied")
+	}
+
+	if p == "" {
+		return nil, errors.New("no publicID supplied")
+	}
+
+	rpk, err := o.getPK(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+
+	sk, err := privateKeytoStorageKey(id.PrivateKey(rpk), []byte("genericSeal"))
+	if err != nil {
+		return nil, fmt.Errorf("getting storage key: %w", err)
+	}
+
+	aead, err := privateStorageAEAD(sk)
+	if err != nil {
+		return nil, fmt.Errorf("creating AEAD: %w", err)
+	}
+
+	pt, err := aead.Open(nil, data[:aead.NonceSize()], data[aead.NonceSize():], []byte(p))
+	if err != nil {
+		return nil, err
+	}
+
+	return pt, nil
 }

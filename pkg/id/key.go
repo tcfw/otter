@@ -28,6 +28,20 @@ type publicableCrypto interface {
 	Public() crypto.PublicKey
 }
 
+func (privk PrivateKey) AsLibP2P() (libp2pCrypto.PrivKey, error) {
+	dc, err := DecodeCryptoMaterial(string(privk))
+	if err != nil {
+		return nil, fmt.Errorf("decoding public key: %w", err)
+	}
+
+	switch pkt := dc.(type) {
+	case ed25519.PrivateKey:
+		return libp2pCrypto.UnmarshalEd25519PrivateKey(pkt)
+	default:
+		return nil, fmt.Errorf("unsupported key type: %T", pkt)
+	}
+}
+
 func (pubk PublicID) AsLibP2P() (libp2pCrypto.PubKey, error) {
 	dc, err := DecodeCryptoMaterial(string(pubk))
 	if err != nil {

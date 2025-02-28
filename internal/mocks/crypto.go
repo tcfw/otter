@@ -44,6 +44,22 @@ func (ks *MockKeyStore) Sign(ctx context.Context, pub id.PublicID, d []byte, h c
 	return sig, nil
 }
 
+func (ks *MockKeyStore) PrivateSeal(ctx context.Context, pub id.PublicID, d []byte) ([]byte, error) {
+	if _, ok := ks.keys[pub]; !ok {
+		return nil, errors.New("not found")
+	}
+
+	return d, nil
+}
+
+func (ks *MockKeyStore) PrivateUnseal(ctx context.Context, pub id.PublicID, d []byte) ([]byte, error) {
+	if _, ok := ks.keys[pub]; !ok {
+		return nil, errors.New("not found")
+	}
+
+	return d, nil
+}
+
 func (ks *MockKeyStore) AddKey(pk id.PrivateKey) error {
 	pubk, err := pk.PublicKey()
 	if err != nil {

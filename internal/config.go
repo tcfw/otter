@@ -53,27 +53,17 @@ func setDefaultConfig() {
 }
 
 func (o *Otter) GetConfig(k config.ConfigKey) any {
-	return viper.Get(string(k))
+	return config.GetConfig(k)
 }
 
 func (o *Otter) GetConfigAs(t any, k config.ConfigKey) any {
-	switch t.(type) {
-	case []string:
-		return viper.GetStringSlice(string(k))
-	case string:
-		return viper.GetString(string(k))
-	case bool:
-		return viper.GetBool(string(k))
-	default:
-		return nil
-	}
+	return config.GetConfigAs(t, k)
 }
 
 func (o *Otter) SetConfig(k config.ConfigKey, v any) {
-	viper.Set(string(k), v)
+	config.SetConfig(k, v)
 }
 
 func (o *Otter) SetAndStoreConfig(k config.ConfigKey, v any) error {
-	viper.Set(string(k), v)
-	return viper.WriteConfig()
+	return config.SetAndStoreConfig(k, v)
 }

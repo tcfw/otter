@@ -31,13 +31,16 @@ type Otter struct {
 	ctx    context.Context
 	logger *zap.Logger
 
-	p2p    host.Host
-	dht    *dualdht.DHT
-	pubsub *pubsub.PubSub
-	ipld   ipld.DAGService
-	mdns   mdns.Service
-	rm     network.ResourceManager
-	ping   *ping.PingService
+	p2p host.Host
+	dht *dualdht.DHT
+
+	pubsub       *pubsub.PubSub
+	publicPubsub *pubsub.PubSub
+
+	ipld ipld.DAGService
+	mdns mdns.Service
+	rm   network.ResourceManager
+	ping *ping.PingService
 
 	ui *uiConnector
 	ds datastore.Batching
@@ -118,6 +121,8 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 	}
 
 	loadExternalPlugins(o)
+
+	go o.publishMetrics(o.ctx)
 
 	return o, nil
 }
