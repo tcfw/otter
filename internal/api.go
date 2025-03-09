@@ -91,6 +91,10 @@ func (o *Otter) initAPIRouter() (*mux.Router, error) {
 
 	apis.HandleFunc("/storage/keys", o.apiHandle_Storage_ListKeys).Methods(http.MethodGet)
 
+	apis.HandleFunc("/diststorage/pins", o.apiHandle_DistStorage_ListPins).Methods(http.MethodGet)
+	apis.HandleFunc("/diststorage/add", o.apiHandle_DistStorage_Add).Methods(http.MethodPost)
+	apis.HandleFunc("/diststorage/get", o.apiHandle_DistStorage_Get).Methods(http.MethodGet)
+
 	apis.HandleFunc("/debug/clear_tls", o.apiHandle_Debug_ClearTLS).Methods(http.MethodPost)
 
 	o.apiRouter = apis

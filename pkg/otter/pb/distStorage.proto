@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package distStorage;
+
+option go_package = "github.com/tcfw/otter/pkg/otter/pb";
+
+message PinState {
+	bool pinned = 1;
+	bool indirect = 2;
+	bool removing = 3;
+}
+
+enum Allocator {
+	option allow_alias = true;
+	ALLOCATOR_UNSPECIFIED = 0;
+	
+	SPACE = 0;
+	PINCOUNT = 1;
+}
+	
+enum Chunker {
+	option allow_alias = true;
+	CHUNKER_UNSPECIFIED = 0;
+
+	BOXO = 0;
+}
+
+message AddConfig {
+	uint32 minReplicas = 1;
+	uint32 maxReplicas = 2;
+	Allocator Allocator = 3;
+	Chunker Chunker = 4;
+	bool shard = 5;
+	bool local = 6;
+	bool encrypted = 7;
+}
+
+message PinInfo {
+	uint64 totalSize = 1;
+	repeated string pinPeers = 2;
+	uint64 addedTs = 3;
+	uint32 minReplicas = 4;
+	uint32 maxReplicas = 5;
+}

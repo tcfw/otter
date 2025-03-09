@@ -1,21 +1,40 @@
 package internal
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
+	ipfslite "github.com/hsanjuan/ipfs-lite"
+	chunker "github.com/ipfs/boxo/chunker"
+	"github.com/ipfs/boxo/ipld/merkledag"
+	unixfs "github.com/ipfs/boxo/ipld/unixfs"
+	"github.com/ipfs/boxo/ipld/unixfs/importer/balanced"
+	"github.com/ipfs/boxo/ipld/unixfs/importer/helpers"
+	blocks "github.com/ipfs/go-block-format"
+	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/query"
+	dsBadger3 "github.com/ipfs/go-ds-badger3"
+	ipld "github.com/ipfs/go-ipld-format"
+	ipldlegacy "github.com/ipfs/go-ipld-legacy"
 	"github.com/jbenet/goprocess"
+	multihash "github.com/multiformats/go-multihash/core"
+	v1api "github.com/tcfw/otter/pkg/api"
 	"github.com/tcfw/otter/pkg/config"
 	"github.com/tcfw/otter/pkg/id"
+	"github.com/tcfw/otter/pkg/otter"
+	"github.com/tcfw/otter/pkg/otter/pb"
 	"go.uber.org/zap"
-
-	dsBadger3 "github.com/ipfs/go-ds-badger3"
+	protobuf "google.golang.org/protobuf/proto"
 )
 
 const (
@@ -25,6 +44,17 @@ const (
 
 	systemPrefix_Keys = "/keys/"
 	systemPrefix_Pass = "pass/"
+
+	distStorageCheckInterval = 5 * time.Minute
+)
+
+var (
+	distStorageGlobalJobQueue = make(chan *distStorageJob, 1000)
+
+	distStorageSyncers   = map[id.PublicID]*distributedStorage{}
+	distStorageSyncersMu sync.RWMutex
+
+	distStorageJobDefaultMaxRetries = 5
 )
 
 // NewDiskDatastoreStorage instatiates a Badger3 datastore for perminant on-disk
@@ -71,7 +101,7 @@ func (o *Otter) apiHandle_Storage_ListKeys(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(keys)
 }
 
-type cryptoSealUnSeal func(ctx context.Context, b []byte) ([]byte, error)
+type cryptoSealUnsealer func(ctx context.Context, b []byte) ([]byte, error)
 
 type StorageClasses struct {
 	o *Otter
@@ -96,9 +126,11 @@ func (sc *StorageClasses) Public(pub id.PublicID) (datastore.Datastore, error) {
 	}
 
 	return &NamespacedStorage{
-		Datastore: syncer.publicSyncer,
-		logger:    sc.o.logger.Named("public_storage"),
-		ns:        datastore.NewKey(publicKeyPrefix + string(pub)),
+		Datastore:  syncer.publicSyncer,
+		logger:     sc.o.logger.Named("public_storage"),
+		ns:         datastore.NewKey(publicKeyPrefix + string(pub)),
+		putHook:    syncer.AddPutHook,
+		deleteHook: syncer.AddDeleteHook,
 	}, nil
 }
 
@@ -131,11 +163,13 @@ func (sc *StorageClasses) Private(pk id.PrivateKey) (datastore.Datastore, error)
 	ad := []byte(pubk)
 
 	ns := &NamespacedStorage{
-		Datastore: syncer.privateSyncer,
-		logger:    sc.o.logger.Named("private_storage"),
-		ns:        datastore.NewKey(privateKeyPrefix + string(pubk)),
-		seal:      privateStorageSeal(aead, ad),
-		unseal:    privateStorageUnseal(aead, ad),
+		Datastore:  syncer.privateSyncer,
+		logger:     sc.o.logger.Named("private_storage"),
+		ns:         datastore.NewKey(privateKeyPrefix + string(pubk)),
+		seal:       privateStorageSeal(aead, ad),
+		unseal:     privateStorageUnseal(aead, ad),
+		putHook:    syncer.AddPutHook,
+		deleteHook: syncer.AddDeleteHook,
 	}
 
 	return ns, nil
@@ -144,11 +178,31 @@ func (sc *StorageClasses) Private(pk id.PrivateKey) (datastore.Datastore, error)
 // NamespacedStorage provides namespaced and/or encryption functions for a datastore
 type NamespacedStorage struct {
 	datastore.Datastore
+
 	ns     datastore.Key
 	logger *zap.Logger
 
-	seal   cryptoSealUnSeal
-	unseal cryptoSealUnSeal
+	seal   cryptoSealUnsealer
+	unseal cryptoSealUnsealer
+
+	putHook    func(syncerPutHook)
+	deleteHook func(syncerDeleteHook)
+}
+
+func (nss *NamespacedStorage) PutHook(f syncerPutHook) {
+	nss.putHook(func(k datastore.Key, b []byte) {
+		if k.IsDescendantOf(nss.ns) {
+			f(k, b)
+		}
+	})
+}
+
+func (nss *NamespacedStorage) DeleteHook(f syncerDeleteHook) {
+	nss.deleteHook(func(k datastore.Key) {
+		if k.IsDescendantOf(nss.ns) {
+			f(k)
+		}
+	})
 }
 
 // formatKey wraps the key with the storage class namespace
@@ -292,4 +346,742 @@ func (nsr *NamespacedQueryResults) Close() error {
 
 func (nsr *NamespacedQueryResults) Process() goprocess.Process {
 	return nsr.r.Process()
+}
+
+func (o *Otter) apiHandle_DistStorage_ListPins(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	id, err := v1api.GetAuthIDFromContext(ctx)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	ds, err := o.GetOrNewDistributedStorageForKey(ctx, id)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	q, err := ds.pinManagement.Query(ctx, query.Query{KeysOnly: true})
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	res, err := q.Rest()
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	w.Header().Add("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
+}
+
+func (o *Otter) apiHandle_DistStorage_Add(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	id, err := v1api.GetAuthIDFromContext(ctx)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	ds, err := o.GetOrNewDistributedStorageForKey(ctx, id)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	cid, err := ds.AddFromReader(ctx, r.Body, otter.Encrypted())
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	w.Write([]byte(cid.String()))
+}
+
+func (o *Otter) apiHandle_DistStorage_Get(w http.ResponseWriter, r *http.Request) {
+	cs := r.URL.Query().Get("cid")
+	if cs == "" {
+		apiJSONErrorWithStatus(w, fmt.Errorf("cid required"), http.StatusBadRequest)
+		return
+	}
+
+	c, err := cid.Decode(cs)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	ctx := r.Context()
+
+	id, err := v1api.GetAuthIDFromContext(ctx)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	ds, err := o.GetOrNewDistributedStorageForKey(ctx, id)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	var d io.ReadCloser
+
+	if r.URL.Query().Has("encrypted") {
+		d, err = ds.GetEncrypted(ctx, c)
+	} else {
+		d, err = ds.Get(ctx, c)
+	}
+
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+	defer d.Close()
+
+	if _, err := io.Copy(w, d); err != nil {
+		apiJSONError(w, err)
+		return
+	}
+}
+
+func (o *Otter) GetOrNewDistributedStorageForKey(ctx context.Context, pub id.PublicID) (*distributedStorage, error) {
+	distStorageSyncersMu.RLock()
+	ds, ok := distStorageSyncers[pub]
+	distStorageSyncersMu.RUnlock()
+
+	if ok {
+		return ds, nil
+	}
+
+	distStorageSyncersMu.Lock()
+	defer distStorageSyncersMu.Unlock()
+
+	sync, err := o.GetOrNewAccountSyncer(ctx, pub)
+	if err != nil {
+		return nil, err
+	}
+
+	logger := o.logger.Named("dist_storage")
+
+	pinDS := &NamespacedStorage{
+		Datastore:  sync.privateSyncer,
+		ns:         datastore.NewKey("pins"),
+		logger:     logger,
+		putHook:    sync.AddPutHook,
+		deleteHook: sync.AddDeleteHook,
+	}
+
+	ctx, cancel := context.WithCancel(o.ctx)
+
+	ds = &distributedStorage{
+		ctx:           ctx,
+		pkGetter:      o.getPK,
+		pubID:         pub,
+		stop:          cancel,
+		nodeId:        o.HostID().String(),
+		logger:        logger,
+		pinManagement: pinDS,
+		ipfs:          o.ipld.(*ipfslite.Peer),
+		jobQueue:      distStorageGlobalJobQueue,
+		xfers:         make(map[cid.Cid]struct{}),
+	}
+
+	pinDS.putHook(func(k datastore.Key, _ []byte) { ds.hintAdd(k) })
+	pinDS.deleteHook(func(k datastore.Key) { ds.hintRemove(k) })
+
+	go ds.startWatch()
+	//start workers to scale the workers per keys active
+	for range 2 {
+		go ds.worker()
+	}
+
+	distStorageSyncers[pub] = ds
+
+	return ds, nil
+
+}
+
+type distStorageJobAction int
+
+const (
+	distStorageJob_Add distStorageJobAction = iota + 1
+	distStorageJob_Remove
+)
+
+type distStorageJob struct {
+	cid      cid.Cid
+	pcid     cid.Cid
+	action   distStorageJobAction
+	indirect bool
+
+	wait chan struct{}
+
+	tries    int
+	maxTries int
+}
+
+const (
+	nodePinPrefix = "n"
+	cidPinPrefix  = "p"
+)
+
+type distributedStorage struct {
+	ctx      context.Context
+	stop     func()
+	pkGetter func(ctx context.Context, p id.PublicID) (id.PrivateKey, error)
+	nodeId   string
+	logger   *zap.Logger
+
+	pubID         id.PublicID
+	pinManagement datastore.Datastore
+	ipfs          *ipfslite.Peer
+
+	checkMu sync.Mutex
+
+	jobQueue chan *distStorageJob
+
+	xferMu sync.RWMutex
+	xfers  map[cid.Cid]struct{}
+}
+
+func (ds *distributedStorage) startWatch() {
+	t := time.NewTicker(1)
+
+	for {
+		select {
+		case <-ds.ctx.Done():
+			return
+		case <-t.C:
+			err := ds.checkShouldBePinned()
+			if err != nil {
+				ds.logger.Error("checking pins", zap.Error(err))
+			}
+
+			t.Reset(distStorageCheckInterval)
+		}
+	}
+}
+
+func (ds *distributedStorage) hintAdd(v datastore.Key) {
+	cid, err := cid.Cast([]byte(v.BaseNamespace()))
+	if err != nil {
+		ds.logger.Error("unable to cast CID for add hint", zap.Any("cid", v))
+		return
+	}
+
+	if v.IsDescendantOf(datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId})) {
+		ds.jobQueue <- &distStorageJob{
+			action: distStorageJob_Add,
+			cid:    cid,
+		}
+	}
+}
+
+func (ds *distributedStorage) hintRemove(v datastore.Key) {
+	cid, err := cid.Cast([]byte(v.BaseNamespace()))
+	if err != nil {
+		ds.logger.Error("unable to cast CID for removal hint", zap.Any("cid", v))
+		return
+	}
+
+	if v.IsDescendantOf(datastore.NewKey(cidPinPrefix)) {
+		//removal
+		ds.jobQueue <- &distStorageJob{
+			action: distStorageJob_Remove,
+			cid:    cid,
+		}
+	} else if v.IsDescendantOf(datastore.NewKey(nodePinPrefix)) {
+		//rebalance
+		ds.jobQueue <- &distStorageJob{
+			action: distStorageJob_Remove,
+			cid:    cid,
+		}
+	}
+}
+
+func (ds *distributedStorage) checkShouldBePinned() error {
+	if !ds.checkMu.TryLock() {
+		return errors.New("check already running")
+	}
+	defer ds.checkMu.Unlock()
+
+	ctx, cancel := context.WithCancel(ds.ctx)
+	defer cancel()
+
+	prefix := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId})
+
+	res, err := ds.pinManagement.Query(ctx, query.Query{Prefix: prefix.String(), KeysOnly: true})
+	if err != nil {
+		return err
+	}
+
+	for pin := range res.Next() {
+		cidStr := datastore.NewKey(pin.Key).BaseNamespace()
+		cid, err := cid.Cast([]byte(cidStr))
+		if err != nil {
+			ds.logger.Error("reading CID from node pinset", zap.Error(err), zap.Any("cid", cidStr))
+			continue
+		}
+
+		exists, err := ds.ipfs.HasBlock(ctx, cid)
+		if err != nil {
+			ds.logger.Error("checking CID in local pinset", zap.Error(err), zap.Any("cid", cidStr))
+			continue
+		}
+
+		info := &pb.PinState{}
+		if err := protobuf.Unmarshal(pin.Value, info); err != nil {
+			ds.logger.Error("decoding pininfo", zap.Error(err), zap.Any("cid", cidStr))
+			continue
+		}
+
+		if !exists || !info.Pinned {
+			ds.xferMu.RLock()
+			if _, ok := ds.xfers[cid]; !ok {
+				ds.jobQueue <- &distStorageJob{
+					action:   distStorageJob_Add,
+					cid:      cid,
+					indirect: info.Indirect,
+				}
+			}
+			ds.xferMu.RUnlock()
+
+			continue
+		}
+
+		//TODO(check indrect pins)
+	}
+
+	return nil
+}
+
+func (ds *distributedStorage) worker() {
+	for {
+		select {
+		case <-ds.ctx.Done():
+			return
+		case job, ok := <-ds.jobQueue:
+			if !ok {
+				return
+			}
+
+			if job.maxTries == 0 {
+				job.maxTries = distStorageJobDefaultMaxRetries
+			}
+
+			err := ds.doJob(job)
+			if err != nil {
+				ds.logger.Error("error processing job", zap.Error(err))
+			}
+
+			job.tries++
+			if job.tries <= job.maxTries {
+				ds.jobQueue <- job
+			} else {
+				ds.logger.Debug("job tries exceeded", zap.Any("cid", job.cid))
+			}
+		}
+	}
+}
+
+func (ds *distributedStorage) doJob(job *distStorageJob) error {
+	var err error
+
+	switch job.action {
+	case distStorageJob_Add:
+		err = ds.doAdd(job.cid)
+	case distStorageJob_Remove:
+		err = ds.doRemove(job.cid)
+	default:
+		return errors.New("unknown job type")
+	}
+	if err != nil {
+		return err
+	}
+
+	if job.wait != nil {
+		close(job.wait)
+	}
+
+	return nil
+}
+
+func (ds *distributedStorage) doAdd(c cid.Cid) error {
+	ds.xferMu.RLock()
+	if _, ok := ds.xfers[c]; !ok {
+		ds.logger.Debug("ignoring add, already in progress", zap.Any("cid", c.String()))
+		return nil
+	}
+	ds.xferMu.RUnlock()
+
+	ok, err := ds.ipfs.HasBlock(ds.ctx, c)
+	if err != nil {
+		return err
+	}
+	if ok {
+		ds.logger.Debug("ignoring add, already added", zap.Any("cid", c.String()))
+		return nil
+	}
+
+	ds.xferMu.Lock()
+	ds.xfers[c] = struct{}{}
+	ds.xferMu.Unlock()
+
+	defer func() {
+		ds.xferMu.Lock()
+		defer ds.xferMu.Unlock()
+
+		delete(ds.xfers, c)
+	}()
+
+	node, err := ds.ipfs.Get(ds.ctx, c)
+	if err != nil {
+		return err
+	}
+
+	if err := ds.ipfs.Add(ds.ctx, node); err != nil {
+		return err
+	}
+
+	nav := ipld.NewWalker(ds.ctx, ipld.NewNavigableIPLDNode(node, ds.ipfs))
+	nav.Iterate(func(node ipld.NavigableNode) error {
+		inode := node.GetIPLDNode()
+
+		if err := ds.ipfs.Add(ds.ctx, inode); err != nil {
+			return err
+		}
+
+		k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, inode.Cid().String()})
+
+		info := &pb.PinState{
+			Indirect: true,
+			Pinned:   true,
+		}
+
+		vb, err := protobuf.Marshal(info)
+		if err != nil {
+			return err
+		}
+
+		return ds.pinManagement.Put(ds.ctx, k, vb)
+	})
+
+	k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, c.String()})
+
+	info := &pb.PinState{
+		Indirect: false,
+		Pinned:   true,
+	}
+
+	vb, err := protobuf.Marshal(info)
+	if err != nil {
+		return err
+	}
+
+	return ds.pinManagement.Put(ds.ctx, k, vb)
+}
+
+func (ds *distributedStorage) doRemove(c cid.Cid) error {
+	ok, err := ds.ipfs.HasBlock(ds.ctx, c)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+
+	k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, c.String()})
+
+	vb, err := ds.pinManagement.Get(ds.ctx, k)
+	if err != nil {
+		return err
+	}
+
+	info := &pb.PinState{}
+
+	if err := protobuf.Unmarshal(vb, info); err != nil {
+		return err
+	}
+
+	node, err := ds.ipfs.DAGService.Get(ds.ctx, c)
+	if err != nil {
+		return err
+	}
+
+	err = ds.ipfs.BlockStore().DeleteBlock(ds.ctx, c)
+	if err != nil {
+		return err
+	}
+
+	if err := ds.pinManagement.Delete(ds.ctx, k); err != nil {
+		return err
+	}
+
+	nav := ipld.NewWalker(ds.ctx, ipld.NewNavigableIPLDNode(node, ds.ipfs))
+	nav.Iterate(func(node ipld.NavigableNode) error {
+		inode := node.GetIPLDNode()
+
+		if err := ds.ipfs.BlockStore().DeleteBlock(ds.ctx, c); err != nil {
+			return err
+		}
+
+		k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, inode.Cid().String()})
+
+		return ds.pinManagement.Delete(ds.ctx, k)
+	})
+
+	return nil
+}
+
+func (ds *distributedStorage) Info(ctx context.Context, c cid.Cid) (*pb.PinInfo, error) {
+	k := datastore.KeyWithNamespaces([]string{cidPinPrefix, c.String()})
+	v, err := ds.pinManagement.Get(ctx, k)
+	if err != nil {
+		if errors.Is(err, datastore.ErrNotFound) {
+			return nil, otter.ErrNotFound
+		}
+
+		return nil, err
+	}
+
+	pi := &pb.PinInfo{}
+	err = protobuf.Unmarshal(v, pi)
+	if err != nil {
+		return nil, err
+	}
+
+	return pi, nil
+}
+
+func (ds *distributedStorage) Get(ctx context.Context, c cid.Cid) (io.ReadSeekCloser, error) {
+	r, err := ds.ipfs.GetFile(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+
+	return r, nil
+}
+
+func (ds *distributedStorage) GetEncrypted(ctx context.Context, c cid.Cid) (io.ReadCloser, error) {
+	n, err := ds.ipfs.Get(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+
+	pk, err := ds.pkGetter(ctx, ds.pubID)
+	if err != nil {
+		return nil, err
+	}
+
+	pubk, err := pk.PublicKey()
+	if err != nil {
+		return nil, err
+	}
+
+	ad := []byte(pubk)
+
+	sk, err := privateKeytoStorageKey(pk, nil)
+	if err != nil {
+		return nil, fmt.Errorf("getting storage key: %w", err)
+	}
+
+	aead, err := privateStorageAEAD(sk)
+	if err != nil {
+		return nil, fmt.Errorf("creating AEAD: %w", err)
+	}
+
+	return NewEncryptedUnixFSReader(ctx, n, ds.ipfs, aead, ad)
+}
+
+func (ds *distributedStorage) Remove(ctx context.Context, c cid.Cid) error {
+	k := datastore.KeyWithNamespaces([]string{cidPinPrefix, c.String()})
+	ok, err := ds.pinManagement.Has(ctx, k)
+	if err != nil {
+		if errors.Is(err, datastore.ErrNotFound) {
+			return otter.ErrNotFound
+		}
+
+		return err
+	}
+	if !ok {
+		return otter.ErrNotFound
+	}
+
+	return ds.pinManagement.Delete(ctx, k)
+}
+
+func (ds *distributedStorage) defaultConfig() *pb.AddConfig {
+	return &pb.AddConfig{}
+}
+
+func (ds *distributedStorage) AddFromSlice(ctx context.Context, b []byte, opts ...otter.AddOption) (cid.Cid, error) {
+	return ds.AddFromReader(ctx, bytes.NewReader(b), opts...)
+}
+
+func (ds *distributedStorage) AddFromReader(ctx context.Context, r io.Reader, opts ...otter.AddOption) (cid.Cid, error) {
+	cfg := ds.defaultConfig()
+	for _, opt := range opts {
+		if err := opt(cfg); err != nil {
+			return cid.Undef, err
+		}
+	}
+
+	prefix, err := merkledag.PrefixForCidVersion(1)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("bad CID Version: %s", err)
+	}
+
+	prefix.MhType = multihash.SHA2_256
+	prefix.MhLength = -1
+
+	dbp := helpers.DagBuilderParams{
+		Dagserv:    ds.ipfs,
+		Maxlinks:   helpers.DefaultLinksPerBlock,
+		CidBuilder: &prefix,
+	}
+
+	var chunkerName string
+	switch cfg.Chunker {
+	case pb.Chunker_BOXO: //pb.Chunker_CHUNKER_UNSPECIFIED
+		chunkerName = "" //use default chunker
+	default:
+		return cid.Undef, fmt.Errorf("unknown chunker")
+	}
+
+	chnk, err := chunker.FromString(r, chunkerName)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	if cfg.Encrypted {
+		pk, err := ds.pkGetter(ctx, ds.pubID)
+		if err != nil {
+			return cid.Undef, err
+		}
+
+		chnk, err = newEncryptedChunker(chnk, pk)
+		if err != nil {
+			return cid.Undef, err
+		}
+	}
+
+	dbh, err := dbp.New(chnk)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	n, err := balanced.Layout(dbh)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	c := n.Cid()
+
+	err = ds.AddCid(ctx, c, opts...)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	return c, nil
+}
+
+func (ds *distributedStorage) AddCid(ctx context.Context, c cid.Cid, opts ...otter.AddOption) error {
+	cfg := ds.defaultConfig()
+	for _, opt := range opts {
+		if err := opt(cfg); err != nil {
+			return err
+		}
+	}
+
+	
+
+	return nil
+}
+
+func newEncryptedChunker(spl chunker.Splitter, pk id.PrivateKey) (*encryptedChunker, error) {
+	pubk, err := pk.PublicKey()
+	if err != nil {
+		return nil, err
+	}
+
+	ad := []byte(pubk)
+
+	sk, err := privateKeytoStorageKey(pk, nil)
+	if err != nil {
+		return nil, fmt.Errorf("getting storage key: %w", err)
+	}
+
+	aead, err := privateStorageAEAD(sk)
+	if err != nil {
+		return nil, fmt.Errorf("creating AEAD: %w", err)
+	}
+
+	return &encryptedChunker{spl, privateStorageSeal(aead, ad)}, nil
+}
+
+type encryptedChunker struct {
+	splitter chunker.Splitter
+	cipher   cryptoSealUnsealer
+}
+
+func (es *encryptedChunker) Reader() io.Reader {
+	return nil
+}
+
+func (es *encryptedChunker) NextBytes() ([]byte, error) {
+	b, err := es.splitter.NextBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	return es.cipher(context.Background(), b)
+}
+
+func decryptNode(ctx context.Context, n ipld.Node, cipher cryptoSealUnsealer) (ipld.Node, error) {
+	switch n := n.(type) {
+	case *merkledag.ProtoNode:
+		fsNode, err := unixfs.FSNodeFromBytes(n.Data())
+		if err != nil {
+			return nil, err
+		}
+		d := fsNode.Data()
+		ptd, err := cipher(ctx, d)
+		if err != nil {
+			return nil, err
+		}
+
+		fsNode.SetData(ptd)
+		b, err := fsNode.GetBytes()
+		if err != nil {
+			return nil, err
+		}
+		n.SetData(b)
+
+		return n, nil
+	case *merkledag.RawNode:
+		d := n.RawData()
+
+		ptd, err := cipher(ctx, d)
+		if err != nil {
+			return nil, err
+		}
+
+		bb, err := blocks.NewBlockWithCid(ptd, n.Cid())
+		if err != nil {
+			return nil, err
+		}
+
+		return &ipldlegacy.LegacyNode{
+			Block: bb,
+			Node:  n,
+		}, nil
+	default:
+		return nil, errors.New("unsupported node type")
+	}
 }

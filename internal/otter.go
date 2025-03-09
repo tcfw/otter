@@ -96,10 +96,12 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 	}
 
 	blocks := blockstore.NewGCBlockstore(blockstore.NewBlockstore(ds), blockstore.NewGCLocker())
-	o.ipld, err = ipfslite.New(ctx, ds, blocks, o.p2p, o.dht, nil)
+
+	ipfs, err := ipfslite.New(ctx, ds, blocks, o.p2p, o.dht, nil)
 	if err != nil {
 		return nil, fmt.Errorf("initing ipfs-lite: %w", err)
 	}
+	o.ipld = ipfs
 
 	go o.watchPeers()
 	go o.publishIPNS(ctx)

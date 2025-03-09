@@ -30,12 +30,19 @@ var (
 	accountSyncersMu sync.RWMutex
 )
 
+type syncerPutHook func(datastore.Key, []byte)
+type syncerDeleteHook func(datastore.Key)
+
 type syncer struct {
 	ctx    context.Context
 	cancel chan struct{}
 
 	publicSyncer  *crdt.Datastore
 	privateSyncer *crdt.Datastore
+
+	hookMu      sync.RWMutex
+	putHooks    []syncerPutHook
+	deleteHooks []syncerDeleteHook
 }
 
 func (s *syncer) Close() error {
@@ -50,6 +57,38 @@ func (s *syncer) Close() error {
 	close(s.cancel)
 
 	return nil
+}
+
+func (s *syncer) AddPutHook(f syncerPutHook) {
+	s.hookMu.Lock()
+	defer s.hookMu.Unlock()
+
+	s.putHooks = append(s.putHooks, f)
+}
+
+func (s *syncer) AddDeleteHook(f syncerDeleteHook) {
+	s.hookMu.Lock()
+	defer s.hookMu.Unlock()
+
+	s.deleteHooks = append(s.deleteHooks, f)
+}
+
+func (s *syncer) putHook(k datastore.Key, v []byte) {
+	s.hookMu.RLock()
+	defer s.hookMu.RUnlock()
+
+	for _, hook := range s.putHooks {
+		hook(k, v)
+	}
+}
+
+func (s *syncer) deleteHook(k datastore.Key) {
+	s.hookMu.RLock()
+	defer s.hookMu.RUnlock()
+
+	for _, hook := range s.deleteHooks {
+		hook(k)
+	}
 }
 
 func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
@@ -145,20 +184,21 @@ func (o *Otter) GetOrNewAccountSyncer(ctx context.Context, pubk id.PublicID) (*s
 	ds, ok := accountSyncers[pubk]
 	accountSyncersMu.RUnlock()
 
-	if !ok {
-		accountSyncersMu.Lock()
-		defer accountSyncersMu.Unlock()
-
-		nds, err := o.newAccountSyncer(ctx, pubk)
-		if err != nil {
-			return nil, fmt.Errorf("creating new account syncer: %w", err)
-		}
-
-		accountSyncers[pubk] = nds
-		return nds, nil
+	if ok {
+		return ds, nil
 	}
 
-	return ds, nil
+	accountSyncersMu.Lock()
+	defer accountSyncersMu.Unlock()
+
+	nds, err := o.newAccountSyncer(ctx, pubk)
+	if err != nil {
+		return nil, fmt.Errorf("creating new account syncer: %w", err)
+	}
+
+	accountSyncers[pubk] = nds
+	return nds, nil
+
 }
 
 func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer, error) {
@@ -169,23 +209,27 @@ func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer
 		return nil, fmt.Errorf("creating syncer broadcaster: %w", err)
 	}
 
+	canCh := make(chan struct{})
+
+	s := &syncer{ctx: ctx, cancel: canCh}
+
 	opts := crdt.DefaultOptions()
 	opts.Logger = o.logger.Named("crdt").Sugar()
+	opts.PutHook = s.putHook
+	opts.DeleteHook = s.deleteHook
 
 	publicPrefix := datastore.NewKey(publicKeyPrefix + string(pubk))
 	privatePrefix := datastore.NewKey(privateKeyPrefix + string(pubk))
 
-	publicSyncer, err := crdt.New(o.ds, publicPrefix, o.ipld, bs, opts)
+	s.publicSyncer, err = crdt.New(o.ds, publicPrefix, o.ipld, bs, opts)
 	if err != nil {
 		return nil, fmt.Errorf("creating public syncer: %w", err)
 	}
 
-	privateSyncer, err := crdt.New(o.ds, privatePrefix, o.ipld, bs, opts)
+	s.privateSyncer, err = crdt.New(o.ds, privatePrefix, o.ipld, bs, opts)
 	if err != nil {
 		return nil, fmt.Errorf("creating private syncer: %w", err)
 	}
-
-	canCh := make(chan struct{})
 
 	go func() {
 		t := time.NewTicker(syncInterval)
@@ -199,17 +243,17 @@ func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer
 				t.Stop()
 				return
 			case <-t.C:
-				if err := publicSyncer.Sync(ctx, datastore.NewKey("/")); err != nil {
+				if err := s.publicSyncer.Sync(ctx, datastore.NewKey("/")); err != nil {
 					o.logger.Error("syncing public syncer", zap.Error(err))
 				}
-				if err := privateSyncer.Sync(ctx, datastore.NewKey("/")); err != nil {
+				if err := s.privateSyncer.Sync(ctx, datastore.NewKey("/")); err != nil {
 					o.logger.Error("syncing private syncer", zap.Error(err))
 				}
 			}
 		}
 	}()
 
-	return &syncer{ctx, canCh, publicSyncer, privateSyncer}, nil
+	return s, nil
 }
 
 func (o *Otter) StopAccountSyncer(ctx context.Context, pubk id.PublicID) error {

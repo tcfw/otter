@@ -169,33 +169,33 @@ func privateStorageAEAD(sk []byte) (cipher.AEAD, error) {
 }
 
 // privateStorageSeal seals protected data via AEAD
-func privateStorageSeal(ci cipher.AEAD, ad []byte) cryptoSealUnSeal {
+func privateStorageSeal(ci cipher.AEAD, ad []byte) cryptoSealUnsealer {
 	return func(ctx context.Context, b []byte) ([]byte, error) {
 		nSize := ci.NonceSize()
 
-		nonce := make([]byte, nSize+ci.Overhead()+len(b))
-		if n, err := rand.Read(nonce[:nSize]); n != nSize || err != nil {
+		nonce := make([]byte, nSize)
+		if n, err := rand.Read(nonce); n != nSize || err != nil {
 			return nil, fmt.Errorf("reading nonce: %w", err)
 		}
 
-		ci.Seal(nonce[nSize:], nonce[:nSize], b, ad)
+		sealed := ci.Seal(nil, nonce, b, ad)
+		nonce = append(nonce, sealed...)
 
 		return nonce, nil
 	}
 }
 
 // privateStorageUnseal unseals protected data via AEAD
-func privateStorageUnseal(ci cipher.AEAD, ad []byte) cryptoSealUnSeal {
+func privateStorageUnseal(ci cipher.AEAD, ad []byte) cryptoSealUnsealer {
 	return func(ctx context.Context, b []byte) ([]byte, error) {
 		nSize := ci.NonceSize()
-		padded := make([]byte, len(b)-nSize-ci.Overhead())
 
-		_, err := ci.Open(padded, b[:nSize], b[nSize:], ad)
+		pt, err := ci.Open(nil, b[:nSize], b[nSize:], ad)
 		if err != nil {
 			return nil, fmt.Errorf("opening sealed private storage block: %w", err)
 		}
 
-		return padded, nil
+		return pt, nil
 	}
 }
 
