@@ -13,21 +13,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/mux"
 	ipfslite "github.com/hsanjuan/ipfs-lite"
 	chunker "github.com/ipfs/boxo/chunker"
 	"github.com/ipfs/boxo/ipld/merkledag"
-	unixfs "github.com/ipfs/boxo/ipld/unixfs"
 	"github.com/ipfs/boxo/ipld/unixfs/importer/balanced"
 	"github.com/ipfs/boxo/ipld/unixfs/importer/helpers"
-	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/query"
 	dsBadger3 "github.com/ipfs/go-ds-badger3"
 	ipld "github.com/ipfs/go-ipld-format"
-	ipldlegacy "github.com/ipfs/go-ipld-legacy"
 	"github.com/jbenet/goprocess"
+	"github.com/libp2p/go-libp2p/core/peer"
 	multihash "github.com/multiformats/go-multihash/core"
+	"github.com/tcfw/otter/internal/storage"
 	v1api "github.com/tcfw/otter/pkg/api"
 	"github.com/tcfw/otter/pkg/config"
 	"github.com/tcfw/otter/pkg/id"
@@ -189,10 +189,14 @@ type NamespacedStorage struct {
 	deleteHook func(syncerDeleteHook)
 }
 
+func trimNamespacePrefix(prefix datastore.Key, k datastore.Key) datastore.Key {
+	return datastore.NewKey(strings.TrimPrefix(k.String(), prefix.String()))
+}
+
 func (nss *NamespacedStorage) PutHook(f syncerPutHook) {
 	nss.putHook(func(k datastore.Key, b []byte) {
 		if k.IsDescendantOf(nss.ns) {
-			f(k, b)
+			f(trimNamespacePrefix(nss.ns, k), b)
 		}
 	})
 }
@@ -200,7 +204,7 @@ func (nss *NamespacedStorage) PutHook(f syncerPutHook) {
 func (nss *NamespacedStorage) DeleteHook(f syncerDeleteHook) {
 	nss.deleteHook(func(k datastore.Key) {
 		if k.IsDescendantOf(nss.ns) {
-			f(k)
+			f(trimNamespacePrefix(nss.ns, k))
 		}
 	})
 }
@@ -348,6 +352,46 @@ func (nsr *NamespacedQueryResults) Process() goprocess.Process {
 	return nsr.r.Process()
 }
 
+func (o *Otter) apiHandle_DistStorage_PinInfo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	infoKey, ok := mux.Vars(r)["info"]
+	if !ok {
+		apiJSONErrorWithStatus(w, errors.New("missing info"), http.StatusBadRequest)
+		return
+	}
+
+	id, err := v1api.GetAuthIDFromContext(ctx)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	ds, err := o.GetOrNewDistributedStorageForKey(ctx, id)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	k := datastore.KeyWithNamespaces([]string{cidPinPrefix, infoKey})
+
+	b, err := ds.pinManagement.Get(ctx, k)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	info := &pb.PinInfo{}
+	err = protobuf.Unmarshal(b, info)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	w.Header().Add("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
+}
+
 func (o *Otter) apiHandle_DistStorage_ListPins(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -363,7 +407,7 @@ func (o *Otter) apiHandle_DistStorage_ListPins(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	q, err := ds.pinManagement.Query(ctx, query.Query{KeysOnly: true})
+	q, err := ds.pinManagement.Query(ctx, query.Query{})
 	if err != nil {
 		apiJSONError(w, err)
 		return
@@ -394,7 +438,7 @@ func (o *Otter) apiHandle_DistStorage_Add(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	cid, err := ds.AddFromReader(ctx, r.Body, otter.Encrypted())
+	cid, err := ds.AddFromReader(ctx, r.Body, otter.WithEncrypted(), otter.WithMinReplicas(1), otter.WithMaxReplicas(2))
 	if err != nil {
 		apiJSONError(w, err)
 		return
@@ -477,23 +521,38 @@ func (o *Otter) GetOrNewDistributedStorageForKey(ctx context.Context, pub id.Pub
 		deleteHook: sync.AddDeleteHook,
 	}
 
+	// res, err := pinDS.Query(ctx, query.Query{})
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// for r := range res.Next() {
+	// 	pinDS.Delete(ctx, datastore.NewKey(r.Key))
+	// }
+
+	metricsCollector, err := o.getCollectorOrNew(pub)
+	if err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(o.ctx)
 
 	ds = &distributedStorage{
 		ctx:           ctx,
 		pkGetter:      o.getPK,
+		metrics:       metricsCollector,
 		pubID:         pub,
 		stop:          cancel,
 		nodeId:        o.HostID().String(),
 		logger:        logger,
 		pinManagement: pinDS,
-		ipfs:          o.ipld.(*ipfslite.Peer),
-		jobQueue:      distStorageGlobalJobQueue,
-		xfers:         make(map[cid.Cid]struct{}),
+
+		ipfs:     o.ipld.(*ipfslite.Peer),
+		jobQueue: distStorageGlobalJobQueue,
+		xfers:    make(map[cid.Cid]struct{}),
 	}
 
-	pinDS.putHook(func(k datastore.Key, _ []byte) { ds.hintAdd(k) })
-	pinDS.deleteHook(func(k datastore.Key) { ds.hintRemove(k) })
+	pinDS.PutHook(func(k datastore.Key, _ []byte) { ds.hintAdd(k) })
+	pinDS.DeleteHook(func(k datastore.Key) { ds.hintRemove(k) })
 
 	go ds.startWatch()
 	//start workers to scale the workers per keys active
@@ -541,6 +600,7 @@ type distributedStorage struct {
 	pubID         id.PublicID
 	pinManagement datastore.Datastore
 	ipfs          *ipfslite.Peer
+	metrics       *Collector
 
 	checkMu sync.Mutex
 
@@ -569,13 +629,34 @@ func (ds *distributedStorage) startWatch() {
 }
 
 func (ds *distributedStorage) hintAdd(v datastore.Key) {
-	cid, err := cid.Cast([]byte(v.BaseNamespace()))
-	if err != nil {
-		ds.logger.Error("unable to cast CID for add hint", zap.Any("cid", v))
-		return
-	}
-
 	if v.IsDescendantOf(datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId})) {
+		cid, err := cid.Decode(v.BaseNamespace())
+		if err != nil {
+			ds.logger.Error("unable to cast CID for add hint", zap.Any("cid", v))
+			return
+		}
+
+		ds.logger.Debug("got new hint add", zap.Any("cid", cid))
+
+		infoBytes, err := ds.pinManagement.Get(ds.ctx, v)
+		if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+			ds.logger.Error("unable to fetch key for add hint", zap.Any("cid", v))
+			return
+		}
+
+		if len(infoBytes) > 0 {
+			info := &pb.PinState{}
+			if err := protobuf.Unmarshal(infoBytes, info); err != nil {
+				ds.logger.Error("unable to decode key for add hint", zap.Any("cid", v))
+				return
+			}
+
+			if info.Pinned {
+				ds.logger.Debug("skipping hint add, already pinned", zap.Any("cid", cid))
+				return
+			}
+		}
+
 		ds.jobQueue <- &distStorageJob{
 			action: distStorageJob_Add,
 			cid:    cid,
@@ -584,19 +665,27 @@ func (ds *distributedStorage) hintAdd(v datastore.Key) {
 }
 
 func (ds *distributedStorage) hintRemove(v datastore.Key) {
-	cid, err := cid.Cast([]byte(v.BaseNamespace()))
-	if err != nil {
-		ds.logger.Error("unable to cast CID for removal hint", zap.Any("cid", v))
-		return
-	}
-
 	if v.IsDescendantOf(datastore.NewKey(cidPinPrefix)) {
+		cid, err := cid.Decode(v.BaseNamespace())
+		if err != nil {
+			ds.logger.Error("unable to cast CID for removal hint", zap.Any("cid", v))
+			return
+		}
+
 		//removal
 		ds.jobQueue <- &distStorageJob{
 			action: distStorageJob_Remove,
 			cid:    cid,
 		}
-	} else if v.IsDescendantOf(datastore.NewKey(nodePinPrefix)) {
+	} else if v.IsDescendantOf(datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId})) {
+		cid, err := cid.Decode(v.BaseNamespace())
+		if err != nil {
+			ds.logger.Error("unable to cast CID for removal hint", zap.Any("cid", v))
+			return
+		}
+
+		//TODO(tcfw) check which nodes are supposed to be pinning and adjust
+
 		//rebalance
 		ds.jobQueue <- &distStorageJob{
 			action: distStorageJob_Remove,
@@ -623,7 +712,7 @@ func (ds *distributedStorage) checkShouldBePinned() error {
 
 	for pin := range res.Next() {
 		cidStr := datastore.NewKey(pin.Key).BaseNamespace()
-		cid, err := cid.Cast([]byte(cidStr))
+		cid, err := cid.Decode(cidStr)
 		if err != nil {
 			ds.logger.Error("reading CID from node pinset", zap.Error(err), zap.Any("cid", cidStr))
 			continue
@@ -676,9 +765,11 @@ func (ds *distributedStorage) worker() {
 			}
 
 			err := ds.doJob(job)
-			if err != nil {
-				ds.logger.Error("error processing job", zap.Error(err))
+			if err == nil {
+				continue
 			}
+
+			ds.logger.Error("error processing job", zap.Error(err))
 
 			job.tries++
 			if job.tries <= job.maxTries {
@@ -714,24 +805,37 @@ func (ds *distributedStorage) doJob(job *distStorageJob) error {
 
 func (ds *distributedStorage) doAdd(c cid.Cid) error {
 	ds.xferMu.RLock()
-	if _, ok := ds.xfers[c]; !ok {
+	if _, ok := ds.xfers[c]; ok {
 		ds.logger.Debug("ignoring add, already in progress", zap.Any("cid", c.String()))
 		return nil
 	}
 	ds.xferMu.RUnlock()
 
-	ok, err := ds.ipfs.HasBlock(ds.ctx, c)
-	if err != nil {
-		return err
-	}
-	if ok {
-		ds.logger.Debug("ignoring add, already added", zap.Any("cid", c.String()))
-		return nil
-	}
+	ds.logger.Debug("adding CID to local blocks", zap.Any("cid", c.String()))
 
 	ds.xferMu.Lock()
 	ds.xfers[c] = struct{}{}
 	ds.xferMu.Unlock()
+
+	k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, c.String()})
+
+	psExists, err := ds.pinManagement.Get(ds.ctx, k)
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+		return fmt.Errorf("getting pinset key for pinInfo")
+	}
+
+	hasBlock, err := ds.ipfs.HasBlock(ds.ctx, c)
+	if err != nil {
+		return err
+	}
+
+	//skip if we already have it, we might have the block but not updated the pinState
+	//if the event is due to an indirect add it should be set already
+	if len(psExists) != 0 && hasBlock {
+		return nil
+	}
+
+	ds.logger.Debug("adding to pin", zap.Any("cid", c.String()))
 
 	defer func() {
 		ds.xferMu.Lock()
@@ -753,6 +857,8 @@ func (ds *distributedStorage) doAdd(c cid.Cid) error {
 	nav.Iterate(func(node ipld.NavigableNode) error {
 		inode := node.GetIPLDNode()
 
+		ds.logger.Debug("adding indirect CID to local blocks", zap.Any("cid", inode.Cid().String()))
+
 		if err := ds.ipfs.Add(ds.ctx, inode); err != nil {
 			return err
 		}
@@ -762,6 +868,7 @@ func (ds *distributedStorage) doAdd(c cid.Cid) error {
 		info := &pb.PinState{
 			Indirect: true,
 			Pinned:   true,
+			Parent:   c.String(),
 		}
 
 		vb, err := protobuf.Marshal(info)
@@ -772,11 +879,8 @@ func (ds *distributedStorage) doAdd(c cid.Cid) error {
 		return ds.pinManagement.Put(ds.ctx, k, vb)
 	})
 
-	k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, c.String()})
-
 	info := &pb.PinState{
-		Indirect: false,
-		Pinned:   true,
+		Pinned: true,
 	}
 
 	vb, err := protobuf.Marshal(info)
@@ -797,17 +901,6 @@ func (ds *distributedStorage) doRemove(c cid.Cid) error {
 	}
 
 	k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, c.String()})
-
-	vb, err := ds.pinManagement.Get(ds.ctx, k)
-	if err != nil {
-		return err
-	}
-
-	info := &pb.PinState{}
-
-	if err := protobuf.Unmarshal(vb, info); err != nil {
-		return err
-	}
 
 	node, err := ds.ipfs.DAGService.Get(ds.ctx, c)
 	if err != nil {
@@ -896,7 +989,7 @@ func (ds *distributedStorage) GetEncrypted(ctx context.Context, c cid.Cid) (io.R
 		return nil, fmt.Errorf("creating AEAD: %w", err)
 	}
 
-	return NewEncryptedUnixFSReader(ctx, n, ds.ipfs, aead, ad)
+	return storage.NewEncryptedUnixFSReader(ctx, n, ds.ipfs, aead, ad)
 }
 
 func (ds *distributedStorage) Remove(ctx context.Context, c cid.Cid) error {
@@ -999,9 +1092,80 @@ func (ds *distributedStorage) AddCid(ctx context.Context, c cid.Cid, opts ...ott
 		}
 	}
 
-	
+	peers := storage.OrderPeersBy(ds.metrics.last, &storage.AvailableSpace{})
+	if len(peers) < int(cfg.MinReplicas) {
+		return fmt.Errorf("not enough peers to meet minReplica count, have %d peers, want %d", len(peers), cfg.MinReplicas)
+	}
 
-	return nil
+	peers = peers[:min(uint32(len(peers)), cfg.MaxReplicas)]
+
+	bs, err := getDagBlockSize(ctx, c, ds.ipfs)
+	if err != nil {
+		return err
+	}
+
+	info := &pb.PinInfo{
+		MinReplicas: cfg.MinReplicas,
+		MaxReplicas: cfg.MaxReplicas,
+		AddedTs:     uint64(time.Now().UnixMilli()),
+		PinPeers:    []string{},
+		TotalSize:   uint64(bs),
+	}
+
+	var errs error
+
+	for _, peer := range peers {
+		info.PinPeers = append(info.PinPeers, peer.String())
+		err := ds.assignCidToPeer(ctx, c, peer)
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+
+	b, err := protobuf.Marshal(info)
+	if err != nil {
+		return err
+	}
+
+	pinSetInfoKey := datastore.KeyWithNamespaces([]string{cidPinPrefix, c.String()})
+	return ds.pinManagement.Put(ctx, pinSetInfoKey, b)
+}
+
+func getDagBlockSize(ctx context.Context, c cid.Cid, ng ipld.NodeGetter) (uint, error) {
+	var size uint
+
+	n, err := ng.Get(ctx, c)
+	if err != nil {
+		return 0, err
+	}
+
+	size += uint(len(n.RawData()))
+
+	walker := ipld.NewWalker(ctx, ipld.NewNavigableIPLDNode(n, ng))
+	walker.Iterate(func(node ipld.NavigableNode) error {
+		size += uint(len(node.GetIPLDNode().RawData()))
+
+		return nil
+	})
+
+	return size, nil
+}
+
+func (ds *distributedStorage) assignCidToPeer(ctx context.Context, c cid.Cid, p peer.ID) error {
+	info := &pb.PinState{
+		Pinned:   false,
+		Indirect: false,
+		Removing: false,
+	}
+
+	b, err := protobuf.Marshal(info)
+	if err != nil {
+		return err
+	}
+
+	k := datastore.KeyWithNamespaces([]string{nodePinPrefix, p.String(), c.String()})
+
+	return ds.pinManagement.Put(ctx, k, b)
 }
 
 func newEncryptedChunker(spl chunker.Splitter, pk id.PrivateKey) (*encryptedChunker, error) {
@@ -1041,47 +1205,4 @@ func (es *encryptedChunker) NextBytes() ([]byte, error) {
 	}
 
 	return es.cipher(context.Background(), b)
-}
-
-func decryptNode(ctx context.Context, n ipld.Node, cipher cryptoSealUnsealer) (ipld.Node, error) {
-	switch n := n.(type) {
-	case *merkledag.ProtoNode:
-		fsNode, err := unixfs.FSNodeFromBytes(n.Data())
-		if err != nil {
-			return nil, err
-		}
-		d := fsNode.Data()
-		ptd, err := cipher(ctx, d)
-		if err != nil {
-			return nil, err
-		}
-
-		fsNode.SetData(ptd)
-		b, err := fsNode.GetBytes()
-		if err != nil {
-			return nil, err
-		}
-		n.SetData(b)
-
-		return n, nil
-	case *merkledag.RawNode:
-		d := n.RawData()
-
-		ptd, err := cipher(ctx, d)
-		if err != nil {
-			return nil, err
-		}
-
-		bb, err := blocks.NewBlockWithCid(ptd, n.Cid())
-		if err != nil {
-			return nil, err
-		}
-
-		return &ipldlegacy.LegacyNode{
-			Block: bb,
-			Node:  n,
-		}, nil
-	default:
-		return nil, errors.New("unsupported node type")
-	}
 }

@@ -8,6 +8,7 @@ message PinState {
 	bool pinned = 1;
 	bool indirect = 2;
 	bool removing = 3;
+	string parent = 4;
 }
 
 enum Allocator {

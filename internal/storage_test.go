@@ -12,9 +12,11 @@ import (
 	"github.com/ipfs/boxo/ipld/unixfs/importer/balanced"
 	"github.com/ipfs/boxo/ipld/unixfs/importer/helpers"
 	"github.com/ipfs/go-cid"
+	"github.com/ipfs/go-datastore"
 	ipld "github.com/ipfs/go-ipld-format"
 	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/assert"
+	"github.com/tcfw/otter/internal/storage"
 	"github.com/tcfw/otter/pkg/id"
 )
 
@@ -155,7 +157,7 @@ func TestDagDecryptingNodeGetter(t *testing.T) {
 		t.Fatalf("creating AEAD: %s", err)
 	}
 
-	r, err := NewEncryptedUnixFSReader(context.Background(), n, ds, aead, ad)
+	r, err := storage.NewEncryptedUnixFSReader(context.Background(), n, ds, aead, ad)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,4 +174,9 @@ func TestDagDecryptingNodeGetter(t *testing.T) {
 	}
 
 	assert.Equal(t, inputData, outputData)
+}
+
+func TestTrimPrefixDatasetKey(t *testing.T) {
+	res := trimNamespacePrefix(datastore.NewKey("pins"), datastore.NewKey("/pins/p/test"))
+	assert.Equal(t, datastore.NewKey("/p/test"), res)
 }

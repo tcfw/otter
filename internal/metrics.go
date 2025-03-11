@@ -8,7 +8,6 @@ import (
 	"time"
 
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/tcfw/otter/internal/metrics"
 	"github.com/tcfw/otter/pkg/id"
 	"go.uber.org/zap"
@@ -29,13 +28,8 @@ type Collector struct {
 	logger *zap.Logger
 	pubsub *pubsub.Topic
 
-	last   map[peer.ID]CollectorLastSet
+	last   metrics.PeerCollectorLastSet
 	lastMu sync.Mutex
-}
-
-type CollectorLastSet struct {
-	ts  time.Time
-	set metrics.Set
 }
 
 func (c *Collector) watch() {
@@ -74,7 +68,7 @@ func (c *Collector) processMsg(msg *pubsub.Message) error {
 	}
 
 	c.lastMu.Lock()
-	c.last[msg.GetFrom()] = CollectorLastSet{ts: time.Now(), set: s}
+	c.last[msg.GetFrom()] = metrics.CollectorLastSet{Ts: time.Now(), Set: s}
 	c.lastMu.Unlock()
 
 	c.logger.Debug("updated last metrics", zap.String("node", msg.GetFrom().String()), zap.Any("metrics", s))
@@ -168,7 +162,7 @@ func (o *Otter) getCollectorOrNew(p id.PublicID) (*Collector, error) {
 		o:      o,
 		pubsub: topic,
 		pk:     p,
-		last:   make(map[peer.ID]CollectorLastSet),
+		last:   make(metrics.PeerCollectorLastSet),
 	}
 	collectors[p] = n
 

@@ -57,7 +57,7 @@ var (
 	}
 )
 
-var connMgr, _ = connmgr.NewConnManager(50, 200, connmgr.WithGracePeriod(60*time.Second))
+var connMgr, _ = connmgr.NewConnManager(20, 200, connmgr.WithGracePeriod(60*time.Second))
 
 func (o *Otter) Registered() []protocol.ID {
 	return o.p2p.Mux().Protocols()

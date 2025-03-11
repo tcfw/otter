@@ -28,9 +28,23 @@ var (
 	ErrNotFound = errors.New("not found")
 )
 
-func Encrypted() AddOption {
+func WithEncrypted() AddOption {
 	return func(ac *pb.AddConfig) error {
 		ac.Encrypted = true
+		return nil
+	}
+}
+
+func WithMinReplicas(n int) AddOption {
+	return func(ac *pb.AddConfig) error {
+		ac.MinReplicas = uint32(n)
+		return nil
+	}
+}
+
+func WithMaxReplicas(n int) AddOption {
+	return func(ac *pb.AddConfig) error {
+		ac.MaxReplicas = uint32(n)
 		return nil
 	}
 }

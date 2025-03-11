@@ -1,17 +1,20 @@
-package internal
+package storage
 
 import (
 	"bytes"
 	"context"
 	"crypto/cipher"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"time"
 
 	mdag "github.com/ipfs/boxo/ipld/merkledag"
 	unixfs "github.com/ipfs/boxo/ipld/unixfs"
+	blocks "github.com/ipfs/go-block-format"
 	ipld "github.com/ipfs/go-ipld-format"
+	ipldlegacy "github.com/ipfs/go-ipld-legacy"
 )
 
 // Common errors
@@ -507,4 +510,61 @@ func (dr *dagReader) resetPosition() {
 	dr.dagWalker = ipld.NewWalker(dr.ctx, ipld.NewNavigableIPLDNode(dr.rootNode, dr.serv))
 	// TODO: This could be avoided (along with storing the `dr.rootNode` and
 	// `dr.serv` just for this call) if `Reset` is supported in the `Walker`.
+}
+
+func decryptNode(ctx context.Context, n ipld.Node, cipher func(ctx context.Context, b []byte) ([]byte, error)) (ipld.Node, error) {
+	switch n := n.(type) {
+	case *mdag.ProtoNode:
+		fsNode, err := unixfs.FSNodeFromBytes(n.Data())
+		if err != nil {
+			return nil, err
+		}
+		d := fsNode.Data()
+		ptd, err := cipher(ctx, d)
+		if err != nil {
+			return nil, err
+		}
+
+		fsNode.SetData(ptd)
+		b, err := fsNode.GetBytes()
+		if err != nil {
+			return nil, err
+		}
+		n.SetData(b)
+
+		return n, nil
+	case *mdag.RawNode:
+		d := n.RawData()
+
+		ptd, err := cipher(ctx, d)
+		if err != nil {
+			return nil, err
+		}
+
+		bb, err := blocks.NewBlockWithCid(ptd, n.Cid())
+		if err != nil {
+			return nil, err
+		}
+
+		return &ipldlegacy.LegacyNode{
+			Block: bb,
+			Node:  n,
+		}, nil
+	default:
+		return nil, errors.New("unsupported node type")
+	}
+}
+
+// privateStorageUnseal unseals protected data via AEAD
+func privateStorageUnseal(ci cipher.AEAD, ad []byte) func(ctx context.Context, b []byte) ([]byte, error) {
+	return func(ctx context.Context, b []byte) ([]byte, error) {
+		nSize := ci.NonceSize()
+
+		pt, err := ci.Open(nil, b[:nSize], b[nSize:], ad)
+		if err != nil {
+			return nil, fmt.Errorf("opening sealed private storage block: %w", err)
+		}
+
+		return pt, nil
+	}
 }
