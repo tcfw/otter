@@ -203,13 +203,6 @@ func (o *Otter) GetOrNewAccountSyncer(ctx context.Context, pubk id.PublicID) (*s
 }
 
 func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer, error) {
-	topic := syncerTopicPrefix + string(pubk)
-
-	bs, err := crdt.NewPubSubBroadcaster(ctx, o.pubsub, topic)
-	if err != nil {
-		return nil, fmt.Errorf("creating syncer broadcaster: %w", err)
-	}
-
 	canCh := make(chan struct{})
 
 	s := &syncer{ctx: ctx, cancel: canCh, logger: o.logger.Named("syncer." + string(pubk))}
@@ -222,12 +215,26 @@ func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer
 	publicPrefix := datastore.NewKey(publicKeyPrefix + string(pubk))
 	privatePrefix := datastore.NewKey(privateKeyPrefix + string(pubk))
 
-	s.publicSyncer, err = crdt.New(o.ds, publicPrefix, o.ipld, bs, opts)
+	publicTopic := syncerTopicPrefix + string(pubk) + ".pub"
+
+	pubBroadcaster, err := crdt.NewPubSubBroadcaster(ctx, o.pubsub, publicTopic)
+	if err != nil {
+		return nil, fmt.Errorf("creating syncer broadcaster: %w", err)
+	}
+
+	privTopic := syncerTopicPrefix + string(pubk) + ".priv"
+
+	privBroadcaster, err := crdt.NewPubSubBroadcaster(ctx, o.pubsub, privTopic)
+	if err != nil {
+		return nil, fmt.Errorf("creating syncer broadcaster: %w", err)
+	}
+
+	s.publicSyncer, err = crdt.New(o.ds, publicPrefix, o.ipld, pubBroadcaster, opts)
 	if err != nil {
 		return nil, fmt.Errorf("creating public syncer: %w", err)
 	}
 
-	s.privateSyncer, err = crdt.New(o.ds, privatePrefix, o.ipld, bs, opts)
+	s.privateSyncer, err = crdt.New(o.ds, privatePrefix, o.ipld, privBroadcaster, opts)
 	if err != nil {
 		return nil, fmt.Errorf("creating private syncer: %w", err)
 	}

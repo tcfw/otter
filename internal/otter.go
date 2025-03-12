@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/tcfw/otter/pkg/config"
+	"github.com/tcfw/otter/pkg/id"
 	"github.com/tcfw/otter/pkg/otter"
 	"github.com/tcfw/otter/pkg/plugins"
 	"go.uber.org/zap"
@@ -125,6 +127,7 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 	loadExternalPlugins(o)
 
 	go o.publishMetrics(o.ctx)
+	go o.ensureSubsystems()
 
 	return o, nil
 }
@@ -209,4 +212,48 @@ func (o *Otter) Stop() error {
 	}
 
 	return nil
+}
+
+func (o *Otter) ensureSubsystems() {
+	<-o.WaitForBootstrap(o.ctx)
+
+	t := time.NewTicker(30 * time.Second)
+	for range t.C {
+		o.ensureSubsystemsForKeys()
+	}
+}
+
+func (o *Otter) ensureSubsystemsForKeys() {
+	logger := o.logger.Named("ensure")
+	logger.Debug("ensuring subsystems")
+
+	pks, err := o.Keys(o.ctx)
+	if err != nil {
+		logger.Error("failed to fetch keys to ensure subsystems", zap.Error(err))
+	}
+
+	for _, k := range pks {
+		err = o.ensureSubsystemsForKey(k)
+		if err != nil {
+			logger.Error("ensuring subsystem for key", zap.String("key", string(k)), zap.Error(err))
+		}
+	}
+}
+
+func (o *Otter) ensureSubsystemsForKey(p id.PublicID) error {
+	var errs error
+
+	if _, err := o.GetOrNewAccountSyncer(o.ctx, p); err != nil {
+		errors.Join(errs, err)
+	}
+
+	if _, err := o.getCollectorOrNew(p); err != nil {
+		errors.Join(errs, err)
+	}
+
+	if _, err := o.GetOrNewDistributedStorageForKey(o.ctx, p); err != nil {
+		errors.Join(errs, err)
+	}
+
+	return errs
 }

@@ -557,14 +557,6 @@ func (o *Otter) GetOrNewDistributedStorageForKey(ctx context.Context, pub id.Pub
 		deleteHook: sync.AddDeleteHook,
 	}
 
-	// res, err := pinDS.Query(ctx, query.Query{})
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// for r := range res.Next() {
-	// 	pinDS.Delete(ctx, datastore.NewKey(r.Key))
-	// }
-
 	metricsCollector, err := o.getCollectorOrNew(pub)
 	if err != nil {
 		return nil, err
@@ -591,6 +583,7 @@ func (o *Otter) GetOrNewDistributedStorageForKey(ctx context.Context, pub id.Pub
 	pinDS.DeleteHook(func(k datastore.Key) { ds.hintRemove(k) })
 
 	go ds.startWatch()
+
 	//start workers to scale the workers per keys active
 	for range 2 {
 		go ds.worker()

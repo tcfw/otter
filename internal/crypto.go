@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/query"
@@ -227,7 +228,7 @@ func (o *Otter) apiHandle_Keys_ImportKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	_, priv, err := id.RecoverKey(req.Mnemonic, req.Password)
+	pub, priv, err := id.RecoverKey(req.Mnemonic, req.Password)
 	if err != nil {
 		apiJSONError(w, fmt.Errorf("recovering key: %w", err))
 		return
@@ -237,6 +238,33 @@ func (o *Otter) apiHandle_Keys_ImportKey(w http.ResponseWriter, r *http.Request)
 		apiJSONError(w, err)
 		return
 	}
+
+	err = o.ensureSubsystemsForKey(pub)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	sync, err := o.GetOrNewAccountSyncer(r.Context(), pub)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	//wait for at least private syncer to find heads
+	for {
+		if sync.privateSyncer.InternalStats(r.Context()).MaxHeight != 0 {
+			break
+		}
+
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(3 * time.Second):
+		}
+	}
+
+	w.Write([]byte("ok"))
 }
 
 func (o *Otter) apiHandle_Keys_NewKey(w http.ResponseWriter, r *http.Request) {
