@@ -447,8 +447,44 @@ func (o *Otter) apiHandle_DistStorage_Add(w http.ResponseWriter, r *http.Request
 	w.Write([]byte(cid.String()))
 }
 
+func (o *Otter) apiHandle_DistStorage_Remove(w http.ResponseWriter, r *http.Request) {
+	cs := mux.Vars(r)["cid"]
+	if cs == "" {
+		apiJSONErrorWithStatus(w, fmt.Errorf("cid required"), http.StatusBadRequest)
+		return
+	}
+
+	c, err := cid.Decode(cs)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	ctx := r.Context()
+
+	id, err := v1api.GetAuthIDFromContext(ctx)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	ds, err := o.GetOrNewDistributedStorageForKey(ctx, id)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	err = ds.Remove(ctx, c)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	w.Write([]byte("ok"))
+}
+
 func (o *Otter) apiHandle_DistStorage_Get(w http.ResponseWriter, r *http.Request) {
-	cs := r.URL.Query().Get("cid")
+	cs := mux.Vars(r)["cid"]
 	if cs == "" {
 		apiJSONErrorWithStatus(w, fmt.Errorf("cid required"), http.StatusBadRequest)
 		return
@@ -575,7 +611,6 @@ const (
 
 type distStorageJob struct {
 	cid      cid.Cid
-	pcid     cid.Cid
 	action   distStorageJobAction
 	indirect bool
 
@@ -629,68 +664,60 @@ func (ds *distributedStorage) startWatch() {
 }
 
 func (ds *distributedStorage) hintAdd(v datastore.Key) {
-	if v.IsDescendantOf(datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId})) {
-		cid, err := cid.Decode(v.BaseNamespace())
-		if err != nil {
-			ds.logger.Error("unable to cast CID for add hint", zap.Any("cid", v))
+	if !v.IsDescendantOf(datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId})) {
+		return
+	}
+
+	cid, err := cid.Decode(v.BaseNamespace())
+	if err != nil {
+		ds.logger.Error("unable to cast CID for add hint", zap.Any("cid", v))
+		return
+	}
+
+	ds.logger.Debug("got new hint add", zap.Any("cid", cid))
+
+	infoBytes, err := ds.pinManagement.Get(ds.ctx, v)
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+		ds.logger.Error("unable to fetch key for add hint", zap.Any("cid", v))
+		return
+	}
+
+	if len(infoBytes) > 0 {
+		info := &pb.PinState{}
+		if err := protobuf.Unmarshal(infoBytes, info); err != nil {
+			ds.logger.Error("unable to decode key for add hint", zap.Any("cid", v))
 			return
 		}
 
-		ds.logger.Debug("got new hint add", zap.Any("cid", cid))
-
-		infoBytes, err := ds.pinManagement.Get(ds.ctx, v)
-		if err != nil && !errors.Is(err, datastore.ErrNotFound) {
-			ds.logger.Error("unable to fetch key for add hint", zap.Any("cid", v))
+		if info.Pinned {
+			ds.logger.Debug("skipping hint add, already pinned", zap.Any("cid", cid))
 			return
 		}
+	}
 
-		if len(infoBytes) > 0 {
-			info := &pb.PinState{}
-			if err := protobuf.Unmarshal(infoBytes, info); err != nil {
-				ds.logger.Error("unable to decode key for add hint", zap.Any("cid", v))
-				return
-			}
+	ds.logger.Debug("queueing add", zap.Any("cid", cid))
 
-			if info.Pinned {
-				ds.logger.Debug("skipping hint add, already pinned", zap.Any("cid", cid))
-				return
-			}
-		}
-
-		ds.jobQueue <- &distStorageJob{
-			action: distStorageJob_Add,
-			cid:    cid,
-		}
+	ds.jobQueue <- &distStorageJob{
+		action: distStorageJob_Add,
+		cid:    cid,
 	}
 }
 
 func (ds *distributedStorage) hintRemove(v datastore.Key) {
-	if v.IsDescendantOf(datastore.NewKey(cidPinPrefix)) {
-		cid, err := cid.Decode(v.BaseNamespace())
-		if err != nil {
-			ds.logger.Error("unable to cast CID for removal hint", zap.Any("cid", v))
-			return
-		}
+	if !v.IsDescendantOf(datastore.NewKey(cidPinPrefix)) &&
+		!v.IsDescendantOf(datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId})) {
+		return
+	}
 
-		//removal
-		ds.jobQueue <- &distStorageJob{
-			action: distStorageJob_Remove,
-			cid:    cid,
-		}
-	} else if v.IsDescendantOf(datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId})) {
-		cid, err := cid.Decode(v.BaseNamespace())
-		if err != nil {
-			ds.logger.Error("unable to cast CID for removal hint", zap.Any("cid", v))
-			return
-		}
+	cid, err := cid.Decode(v.BaseNamespace())
+	if err != nil {
+		ds.logger.Error("unable to cast CID for removal hint", zap.Any("cid", v))
+		return
+	}
 
-		//TODO(tcfw) check which nodes are supposed to be pinning and adjust
-
-		//rebalance
-		ds.jobQueue <- &distStorageJob{
-			action: distStorageJob_Remove,
-			cid:    cid,
-		}
+	ds.jobQueue <- &distStorageJob{
+		action: distStorageJob_Remove,
+		cid:    cid,
 	}
 }
 
@@ -705,7 +732,7 @@ func (ds *distributedStorage) checkShouldBePinned() error {
 
 	prefix := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId})
 
-	res, err := ds.pinManagement.Query(ctx, query.Query{Prefix: prefix.String(), KeysOnly: true})
+	res, err := ds.pinManagement.Query(ctx, query.Query{Prefix: prefix.String()})
 	if err != nil {
 		return err
 	}
@@ -731,6 +758,7 @@ func (ds *distributedStorage) checkShouldBePinned() error {
 		}
 
 		if !exists || !info.Pinned {
+			ds.logger.Debug("suspected missing block", zap.String("cid", cid.String()))
 			ds.xferMu.RLock()
 			if _, ok := ds.xfers[cid]; !ok {
 				ds.jobQueue <- &distStorageJob{
@@ -751,6 +779,10 @@ func (ds *distributedStorage) checkShouldBePinned() error {
 }
 
 func (ds *distributedStorage) worker() {
+	defer func() {
+		ds.logger.Warn("dist_storage worker ended")
+	}()
+
 	for {
 		select {
 		case <-ds.ctx.Done():
@@ -765,17 +797,15 @@ func (ds *distributedStorage) worker() {
 			}
 
 			err := ds.doJob(job)
-			if err == nil {
-				continue
-			}
+			if err != nil {
+				ds.logger.Error("error processing job", zap.Error(err))
 
-			ds.logger.Error("error processing job", zap.Error(err))
-
-			job.tries++
-			if job.tries <= job.maxTries {
-				ds.jobQueue <- job
-			} else {
-				ds.logger.Debug("job tries exceeded", zap.Any("cid", job.cid))
+				job.tries++
+				if job.tries <= job.maxTries {
+					ds.jobQueue <- job
+				} else {
+					ds.logger.Debug("job tries exceeded", zap.Any("cid", job.cid))
+				}
 			}
 		}
 	}
@@ -805,11 +835,12 @@ func (ds *distributedStorage) doJob(job *distStorageJob) error {
 
 func (ds *distributedStorage) doAdd(c cid.Cid) error {
 	ds.xferMu.RLock()
-	if _, ok := ds.xfers[c]; ok {
+	_, ok := ds.xfers[c]
+	ds.xferMu.RUnlock()
+	if ok {
 		ds.logger.Debug("ignoring add, already in progress", zap.Any("cid", c.String()))
 		return nil
 	}
-	ds.xferMu.RUnlock()
 
 	ds.logger.Debug("adding CID to local blocks", zap.Any("cid", c.String()))
 
@@ -854,8 +885,12 @@ func (ds *distributedStorage) doAdd(c cid.Cid) error {
 	}
 
 	nav := ipld.NewWalker(ds.ctx, ipld.NewNavigableIPLDNode(node, ds.ipfs))
-	nav.Iterate(func(node ipld.NavigableNode) error {
+	err = nav.Iterate(func(node ipld.NavigableNode) error {
 		inode := node.GetIPLDNode()
+
+		if inode.Cid() == c {
+			return nil
+		}
 
 		ds.logger.Debug("adding indirect CID to local blocks", zap.Any("cid", inode.Cid().String()))
 
@@ -878,6 +913,9 @@ func (ds *distributedStorage) doAdd(c cid.Cid) error {
 
 		return ds.pinManagement.Put(ds.ctx, k, vb)
 	})
+	if err != nil && !errors.Is(err, ipld.EndOfDag) {
+		return err
+	}
 
 	info := &pb.PinState{
 		Pinned: true,

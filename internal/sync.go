@@ -34,9 +34,9 @@ type syncerPutHook func(datastore.Key, []byte)
 type syncerDeleteHook func(datastore.Key)
 
 type syncer struct {
-	ctx    context.Context
-	cancel chan struct{}
-
+	ctx           context.Context
+	cancel        chan struct{}
+	logger        *zap.Logger
 	publicSyncer  *crdt.Datastore
 	privateSyncer *crdt.Datastore
 
@@ -92,15 +92,16 @@ func (s *syncer) deleteHook(k datastore.Key) {
 }
 
 func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
-	o.logger.Named("pubsub-filter").Debug("validating peer", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+	logger := o.logger.Named("sync.pubsub-filter")
+	logger.Debug("validating peer", zap.Any("topic", topic), zap.Any("peer", pid.String()))
 
 	if !strings.HasPrefix(topic, syncerTopicPrefix) {
-		o.logger.Named("pubsub-filter").Debug("skipping topic validation", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+		logger.Debug("skipping topic validation", zap.Any("topic", topic), zap.Any("peer", pid.String()))
 		return true
 	}
 
 	if pid == o.HostID() {
-		o.logger.Named("pubsub-filter").Debug("skipping self", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+		logger.Debug("skipping self", zap.Any("topic", topic), zap.Any("peer", pid.String()))
 		return true
 	}
 
@@ -111,7 +112,7 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 
 	if !accountSyncersMu.TryRLock() {
 		//possibly trying to start the publisher for storage
-		o.logger.Named("pubsub-filter").Debug("skipping peer validation, account syncer is locked maybe", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+		logger.Debug("skipping peer validation, account syncer is locked maybe", zap.Any("topic", topic), zap.Any("peer", pid.String()))
 		return false
 	}
 	accountSyncersMu.RUnlock()
@@ -128,7 +129,7 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 	}
 
 	for _, peer := range peers {
-		o.logger.Named("pubsub-filter").Debug("validating peer", zap.Any("remote", pid.String()), zap.Any("allowed", peer.String()))
+		logger.Debug("validating peer", zap.Any("remote", pid.String()), zap.Any("allowed", peer.String()))
 		if peer.String() == pid.String() {
 			return true
 		}
@@ -211,10 +212,10 @@ func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer
 
 	canCh := make(chan struct{})
 
-	s := &syncer{ctx: ctx, cancel: canCh}
+	s := &syncer{ctx: ctx, cancel: canCh, logger: o.logger.Named("syncer." + string(pubk))}
 
 	opts := crdt.DefaultOptions()
-	opts.Logger = o.logger.Named("crdt").Sugar()
+	opts.Logger = s.logger.Named("crdt").Sugar()
 	opts.PutHook = s.putHook
 	opts.DeleteHook = s.deleteHook
 

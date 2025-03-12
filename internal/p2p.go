@@ -234,6 +234,7 @@ func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 		peers = ps
 	}
 
+	logger := o.logger.Named("bootstrap")
 	connected := make(chan struct{})
 
 	var wg sync.WaitGroup
@@ -247,7 +248,7 @@ func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 				fmt.Print(err)
 				return
 			}
-			o.logger.Debug("Bootstrap to peer", zap.Any("peerID", pinfo.ID))
+			logger.Debug("Bootstrap to peer", zap.Any("peerID", pinfo.ID))
 			connected <- struct{}{}
 		}(pinfo)
 	}
@@ -262,7 +263,7 @@ func (o *Otter) Bootstrap(peers []peer.AddrInfo) {
 		i++
 	}
 	if nPeers := len(peers); i < nPeers/2 {
-		o.logger.Sugar().Warnf("only connected to %d bootstrap peers out of %d\n", i, nPeers)
+		logger.Sugar().Warnf("only connected to %d bootstrap peers out of %d\n", i, nPeers)
 	}
 
 	err := o.dht.Bootstrap(o.ctx)

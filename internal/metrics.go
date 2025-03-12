@@ -100,7 +100,7 @@ func (o *Otter) publishMetrics(ctx context.Context) {
 		case <-t.C:
 			err := o.doPublishMetrics()
 			if err != nil {
-				o.logger.Error("publishing", zap.Error(err))
+				o.logger.Named("metrics.publisher").Error("publishing", zap.Error(err))
 			}
 
 			t.Reset(metricsBroadcastRate)
@@ -133,7 +133,7 @@ func (o *Otter) doPublishMetrics() error {
 }
 
 func (o *Otter) publishMetricsForKey(k id.PublicID, m metrics.Set) error {
-	o.logger.Debug("publishing metrics", zap.String("p", string(k)))
+	o.logger.Named("metrics.publisher").Debug("publishing metrics", zap.String("p", string(k)))
 
 	c, err := o.getCollectorOrNew(k)
 	if err != nil {
@@ -158,7 +158,7 @@ func (o *Otter) getCollectorOrNew(p id.PublicID) (*Collector, error) {
 	}
 
 	n := &Collector{
-		logger: o.logger.Named("collector-" + string(p)),
+		logger: o.logger.Named("metrics." + string(p) + ".collector"),
 		o:      o,
 		pubsub: topic,
 		pk:     p,
