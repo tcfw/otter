@@ -57,12 +57,12 @@ func (o *Otter) pubsubChainFilter(peer peer.ID, topic string) bool {
 	o.logger.Debug("run filtering for pubsub peer", zap.String("topic", topic), zap.Any("peer", peer))
 
 	for _, filter := range pubsubPeerFilters {
-		if !filter(peer, topic) {
-			return false
+		if filter(peer, topic) {
+			return true
 		}
 	}
 
-	return true
+	return false
 }
 
 var _ discovery.Discovery = (*DHTPubSubDiscovery)(nil)

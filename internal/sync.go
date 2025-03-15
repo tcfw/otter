@@ -92,17 +92,23 @@ func (s *syncer) deleteHook(k datastore.Key) {
 }
 
 func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
+	if pid == o.HostID() {
+		return true
+	}
+
+	<-o.WaitForBootstrap(o.ctx)
+
 	logger := o.logger.Named("sync.pubsub-filter")
-	logger.Debug("validating peer", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+	logger.Debug("checking peer", zap.Any("topic", topic), zap.Any("peer", pid.String()))
 
 	if !strings.HasPrefix(topic, syncerTopicPrefix) {
-		logger.Debug("skipping topic validation", zap.Any("topic", topic), zap.Any("peer", pid.String()))
-		return true
+		logger.Debug("skipping topic validation, unexpected prefix", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+		return false
 	}
 
 	if pid == o.HostID() {
 		logger.Debug("skipping self", zap.Any("topic", topic), zap.Any("peer", pid.String()))
-		return true
+		return false
 	}
 
 	pst := strings.TrimPrefix(topic, syncerTopicPrefix)
@@ -110,7 +116,7 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 	pst = strings.TrimSuffix(pst, ".pub")
 	account := id.PublicID(pst)
 
-	ctx, cancel := context.WithCancel(o.ctx)
+	ctx, cancel := context.WithTimeout(o.ctx, 5*time.Second)
 	defer cancel()
 
 	if !accountSyncersMu.TryRLock() {
@@ -123,17 +129,17 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 	peers, err := o.getAllowedSyncerPeers(ctx, account)
 	if err != nil {
 		logger.Error("getting allows syncer peers: %w", zap.Error(err))
-		return true
+		return false
 	}
 
 	if len(peers) == 0 {
 		//TODO(tcfw): bootstrap allowed peers somehow
-		return true
+		return false
 	}
 
 	for _, peer := range peers {
-		logger.Debug("validating peer", zap.Any("remote", pid.String()), zap.Any("allowed", peer.String()))
-		if peer.String() == pid.String() {
+		if peer == pid {
+			logger.Debug("peer allowed", zap.Any("remote", pid.String()), zap.Any("allowed", peer.String()))
 			return true
 		}
 	}

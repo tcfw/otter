@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 const (
 	metricsBroadcastRate = 30 * time.Second
+	metricsTopicPrefix   = "/otter/metrics/"
 )
 
 var (
@@ -34,11 +36,22 @@ type Collector struct {
 }
 
 func (o *Otter) metricsPubSubFilter(pid peer.ID, topic string) bool {
-	ctx, cancel := context.WithCancel(o.ctx)
+	if pid == o.HostID() {
+		return true
+	}
+
+	<-o.WaitForBootstrap(o.ctx)
+
+	ctx, cancel := context.WithTimeout(o.ctx, 5*time.Second)
 	defer cancel()
 
 	logger := o.logger.Named("metrics.pubsub-filter")
-	logger.Debug("validating peer", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+	logger.Debug("checking peer", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+
+	if !strings.HasPrefix(topic, metricsTopicPrefix) {
+		logger.Debug("skipping topic validation, unexpected prefix", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+		return false
+	}
 
 	keys, err := o.Keys(o.ctx)
 	if err != nil {
@@ -55,21 +68,28 @@ func (o *Otter) metricsPubSubFilter(pid peer.ID, topic string) bool {
 	}
 
 	if account == "" {
+		logger.Debug("no account for associated metrics pubsub")
 		return false
 	}
 
+	logger.Debug("checking allowed peers...", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+
 	peers, err := o.getAllowedSyncerPeers(ctx, account)
 	if err != nil {
-		logger.Error("getting allows syncer peers: %w", zap.Error(err))
-		return true
+		logger.Error("getting allows syncer peers", zap.Error(err))
+		return false
 	}
 
+	logger.Debug("matching allowed peers...", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+
 	for _, peer := range peers {
-		logger.Debug("validating peer", zap.Any("remote", pid.String()), zap.Any("allowed", peer.String()))
-		if peer.String() == pid.String() {
+		if peer == pid {
+			logger.Debug("peer allowed", zap.Any("remote", pid.String()), zap.Any("allowed", peer.String()))
 			return true
 		}
 	}
+
+	logger.Debug("peer not allowed for metrics", zap.Any("remote", pid.String()))
 
 	return false
 }
@@ -216,5 +236,5 @@ func (o *Otter) getCollectorOrNew(p id.PublicID) (*Collector, error) {
 }
 
 func metricName(p id.PublicID) string {
-	return fmt.Sprintf("/otter/metrics/%s", string(p))
+	return fmt.Sprintf("%s%s", metricsTopicPrefix, string(p))
 }
