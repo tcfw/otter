@@ -260,6 +260,9 @@ func (o *Otter) ensureSubsystemsForKey(p id.PublicID) error {
 		errors.Join(errs, err)
 	}
 	for _, p := range peers {
+		if p == o.HostID() {
+			continue
+		}
 		go func() {
 			ctx, cancel := context.WithTimeout(o.ctx, 10*time.Second)
 			defer cancel()
