@@ -132,6 +132,8 @@ func (c *Collector) publishSet(ms metrics.Set) error {
 		return err
 	}
 
+	c.last[c.o.HostID()] = metrics.CollectorLastSet{Set: ms, Ts: time.Now()}
+
 	return c.pubsub.Publish(ctx, msg)
 }
 
