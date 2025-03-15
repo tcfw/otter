@@ -21,6 +21,7 @@ import (
 	"github.com/tcfw/otter/pkg/config"
 	"github.com/tcfw/otter/pkg/id"
 	"github.com/tcfw/otter/pkg/keystore"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/sha3"
@@ -263,6 +264,8 @@ func (o *Otter) apiHandle_Keys_ImportKey(w http.ResponseWriter, r *http.Request)
 		case <-time.After(3 * time.Second):
 		}
 	}
+
+	o.logger.Info("new key added and sync reached head", zap.String("id", string(pub)))
 
 	w.Write([]byte("ok"))
 }
