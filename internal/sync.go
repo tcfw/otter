@@ -105,7 +105,10 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 		return true
 	}
 
-	account := id.PublicID(strings.TrimPrefix(topic, syncerTopicPrefix))
+	pst := strings.TrimPrefix(topic, syncerTopicPrefix)
+	pst = strings.TrimSuffix(pst, ".priv")
+	pst = strings.TrimSuffix(pst, ".pub")
+	account := id.PublicID(pst)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

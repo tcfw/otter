@@ -252,6 +252,19 @@ func (o *Otter) apiHandle_Keys_ImportKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	//Import existing hosts via IPNS
+	peers, err := o.ResolveOtterNodesForKey(r.Context(), pub)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	err = o.setAllowedSyncerPeers(r.Context(), pub, peers)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
 	//wait for at least private syncer to find heads
 	for {
 		if sync.privateSyncer.InternalStats(r.Context()).MaxHeight != 0 {
