@@ -255,5 +255,21 @@ func (o *Otter) ensureSubsystemsForKey(p id.PublicID) error {
 		errors.Join(errs, err)
 	}
 
+	peers, err := o.ResolveOtterNodesForKey(o.ctx, p)
+	if err != nil {
+		errors.Join(errs, err)
+	}
+	for _, p := range peers {
+		go func() {
+			ctx, cancel := context.WithTimeout(o.ctx, 10*time.Second)
+			defer cancel()
+
+			err := o.p2p.Connect(ctx, peer.AddrInfo{ID: p})
+			if err != nil {
+				o.logger.Error("ensuring connection to key peers", zap.Error(err))
+			}
+		}()
+	}
+
 	return errs
 }

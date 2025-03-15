@@ -259,6 +259,8 @@ func (o *Otter) apiHandle_Keys_ImportKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	o.logger.Info("resolved peers for importing key", zap.Any("peers", peers))
+
 	err = o.setAllowedSyncerPeers(r.Context(), pub, peers)
 	if err != nil {
 		apiJSONError(w, err)
