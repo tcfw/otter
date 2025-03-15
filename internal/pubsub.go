@@ -55,6 +55,8 @@ func (o *Otter) setupPubSub(ctx context.Context) error {
 }
 
 func (o *Otter) pubsubChainFilter(peer peer.ID, topic string) bool {
+	o.logger.Debug("run filtering for pubsub peer", zap.String("topic", topic), zap.Any("peer", peer))
+
 	for _, filter := range pubsubPeerFilters {
 		if !filter(peer, topic) {
 			return false
@@ -96,8 +98,6 @@ func (pd *DHTPubSubDiscovery) FindPeers(ctx context.Context, ns string, opts ...
 	if err != nil {
 		return nil, err
 	}
-
-	pd.o.logger.Debug("finding more pubsub peers", zap.String("topic", ns))
 
 	return pd.o.dht.FindProvidersAsync(ctx, cid, options.Limit), nil
 }
