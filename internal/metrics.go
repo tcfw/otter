@@ -8,6 +8,7 @@ import (
 	"time"
 
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/tcfw/otter/internal/metrics"
 	"github.com/tcfw/otter/pkg/id"
 	"go.uber.org/zap"
@@ -30,6 +31,47 @@ type Collector struct {
 
 	last   metrics.PeerCollectorLastSet
 	lastMu sync.Mutex
+}
+
+func (o *Otter) metricsPubSubFilter(pid peer.ID, topic string) bool {
+	ctx, cancel := context.WithCancel(o.ctx)
+	defer cancel()
+
+	logger := o.logger.Named("metrics.pubsub-filter")
+	logger.Debug("validating peer", zap.Any("topic", topic), zap.Any("peer", pid.String()))
+
+	keys, err := o.Keys(o.ctx)
+	if err != nil {
+		logger.Error("getting key list", zap.Error(err))
+	}
+
+	var account id.PublicID
+
+	for _, k := range keys {
+		if metricName(k) == topic {
+			account = k
+			break
+		}
+	}
+
+	if account == "" {
+		return false
+	}
+
+	peers, err := o.getAllowedSyncerPeers(ctx, account)
+	if err != nil {
+		logger.Error("getting allows syncer peers: %w", zap.Error(err))
+		return true
+	}
+
+	for _, peer := range peers {
+		logger.Debug("validating peer", zap.Any("remote", pid.String()), zap.Any("allowed", peer.String()))
+		if peer.String() == pid.String() {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (c *Collector) watch() {
@@ -172,5 +214,5 @@ func (o *Otter) getCollectorOrNew(p id.PublicID) (*Collector, error) {
 }
 
 func metricName(p id.PublicID) string {
-	return fmt.Sprintf("otter.metrics:%s", string(p))
+	return fmt.Sprintf("/otter/metrics/%s", string(p))
 }

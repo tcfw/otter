@@ -110,7 +110,7 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 	pst = strings.TrimSuffix(pst, ".pub")
 	account := id.PublicID(pst)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(o.ctx)
 	defer cancel()
 
 	if !accountSyncersMu.TryRLock() {
@@ -122,7 +122,7 @@ func (o *Otter) syncerPubSubFilter(pid peer.ID, topic string) bool {
 
 	peers, err := o.getAllowedSyncerPeers(ctx, account)
 	if err != nil {
-		o.logger.Error("getting allows syncer peers: %w", zap.Error(err))
+		logger.Error("getting allows syncer peers: %w", zap.Error(err))
 		return true
 	}
 

@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multicodec"
 	"github.com/multiformats/go-multihash"
+	"go.uber.org/zap"
 )
 
 const (
@@ -45,7 +46,10 @@ func (o *Otter) setupPubSub(ctx context.Context) error {
 
 	o.publicPubsub = ppsub
 
-	pubsubPeerFilters = append(pubsubPeerFilters, o.syncerPubSubFilter)
+	pubsubPeerFilters = append(pubsubPeerFilters,
+		o.syncerPubSubFilter,
+		o.metricsPubSubFilter,
+	)
 
 	return nil
 }
@@ -92,6 +96,8 @@ func (pd *DHTPubSubDiscovery) FindPeers(ctx context.Context, ns string, opts ...
 	if err != nil {
 		return nil, err
 	}
+
+	pd.o.logger.Debug("finding more pubsub peers", zap.String("topic", ns))
 
 	return pd.o.dht.FindProvidersAsync(ctx, cid, options.Limit), nil
 }
