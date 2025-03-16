@@ -3,15 +3,14 @@ package internal
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
-	"github.com/ipfs/go-cid"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	"github.com/libp2p/go-libp2p/core/discovery"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/multiformats/go-multicodec"
-	"github.com/multiformats/go-multihash"
+	"github.com/libp2p/go-libp2p/p2p/discovery/backoff"
+	dicoRouter "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	"go.uber.org/zap"
 )
 
@@ -26,11 +25,21 @@ var (
 )
 
 func (o *Otter) setupPubSub(ctx context.Context) error {
-	disco := &DHTPubSubDiscovery{o}
+	disco := dicoRouter.NewRoutingDiscovery(o.dht)
+
+	minBackoff, maxBackoff := time.Second*60, time.Hour
+	rng := rand.New(rand.NewSource(rand.Int63()))
+	d, err := backoff.NewBackoffDiscovery(
+		disco,
+		backoff.NewExponentialBackoff(minBackoff, maxBackoff, backoff.FullJitter, time.Second, 5.0, 0, rng),
+	)
+	if err != nil {
+		return err
+	}
 
 	psub, err := pubsub.NewGossipSub(ctx, o.p2p,
 		pubsub.WithPeerFilter(o.pubsubChainFilter),
-		pubsub.WithDiscovery(disco, pubsub.WithDiscoveryOpts(discovery.TTL(30*time.Second))),
+		pubsub.WithDiscovery(d),
 		pubsub.WithSeenMessagesTTL(20*time.Minute),
 	)
 	if err != nil {
@@ -41,6 +50,9 @@ func (o *Otter) setupPubSub(ctx context.Context) error {
 	pubsubPeerFilters = append(pubsubPeerFilters,
 		o.syncerPubSubFilter,
 		o.metricsPubSubFilter,
+
+		//allow anything else
+		func(pid peer.ID, topic string) bool { return !strings.HasPrefix(topic, otterTopicPrefix) },
 	)
 
 	return nil
@@ -61,67 +73,4 @@ func (o *Otter) pubsubChainFilter(peer peer.ID, topic string) bool {
 	}
 
 	return false
-}
-
-var _ discovery.Discovery = (*DHTPubSubDiscovery)(nil)
-
-type DHTPubSubDiscovery struct {
-	o *Otter
-}
-
-func (pd *DHTPubSubDiscovery) getCID(ns string) (cid.Cid, error) {
-	mh, err := multihash.Sum([]byte(pubsubNsPrefix+ns), multihash.SHA2_256, multihash.DefaultLengths[multihash.SHA2_256])
-	if err != nil {
-		return cid.Undef, err
-	}
-
-	return cid.NewCidV1(uint64(multicodec.Raw), mh), nil
-}
-
-// FindPeers discovers peers providing a service
-func (pd *DHTPubSubDiscovery) FindPeers(ctx context.Context, ns string, opts ...discovery.Option) (<-chan peer.AddrInfo, error) {
-	options := &discovery.Options{}
-	for _, opt := range opts {
-		if err := opt(options); err != nil {
-			return nil, err
-		}
-	}
-
-	if options.Limit == 0 {
-		options.Limit = 20
-	}
-
-	cid, err := pd.getCID(ns)
-	if err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	return pd.o.dht.FindProvidersAsync(ctx, cid, options.Limit), nil
-}
-
-// Advertise advertises a service
-func (pd *DHTPubSubDiscovery) Advertise(ctx context.Context, ns string, opts ...discovery.Option) (time.Duration, error) {
-	options := &discovery.Options{}
-	for _, opt := range opts {
-		if err := opt(options); err != nil {
-			return 0, err
-		}
-	}
-
-	cid, err := pd.getCID(ns)
-	if err != nil {
-		return 0, err
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	if err := pd.o.dht.Provide(ctx, cid, true); err != nil {
-		return 0, err
-	}
-
-	return 5 * time.Minute, nil
 }
