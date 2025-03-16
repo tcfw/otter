@@ -125,7 +125,7 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 
 	loadExternalPlugins(o)
 
-	go o.publishMetrics(o.ctx)
+	go o.publishMetrics()
 	go o.ensureSubsystems()
 
 	return o, nil

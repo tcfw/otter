@@ -152,7 +152,9 @@ func (c *Collector) publishSet(ms metrics.Set) error {
 	return c.pubsub.Publish(ctx, msg)
 }
 
-func (o *Otter) publishMetrics(ctx context.Context) {
+func (o *Otter) publishMetrics() {
+	<-o.WaitForBootstrap(o.ctx)
+
 	t := time.NewTicker(1)
 	for {
 		select {
@@ -163,7 +165,7 @@ func (o *Otter) publishMetrics(ctx context.Context) {
 			}
 
 			t.Reset(metricsBroadcastRate)
-		case <-ctx.Done():
+		case <-o.ctx.Done():
 			return
 		}
 	}
