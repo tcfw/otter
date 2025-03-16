@@ -17,7 +17,7 @@ import (
 
 const (
 	metricsBroadcastRate = 30 * time.Second
-	metricsTopicPrefix   = "/otter/metrics/"
+	metricsTopicPrefix   = otterTopicPrefix + "metrics/"
 )
 
 var (
@@ -32,7 +32,7 @@ type Collector struct {
 	pubsub *pubsub.Topic
 
 	last   metrics.PeerCollectorLastSet
-	lastMu sync.Mutex
+	lastMu sync.RWMutex
 }
 
 func (o *Otter) metricsPubSubFilter(pid peer.ID, topic string) bool {
@@ -84,7 +84,6 @@ func (o *Otter) metricsPubSubFilter(pid peer.ID, topic string) bool {
 
 	for _, peer := range peers {
 		if peer == pid {
-			logger.Debug("peer allowed", zap.Any("remote", pid.String()), zap.Any("allowed", peer.String()))
 			return true
 		}
 	}

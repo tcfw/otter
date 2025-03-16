@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	syncerTopicPrefix = "/otter/sync/"
+	syncerTopicPrefix = otterTopicPrefix + "sync/"
 	syncInterval      = 30 * time.Second
 )
 

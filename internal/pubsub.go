@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -16,6 +17,8 @@ import (
 
 const (
 	pubsubNsPrefix = "/otter-pubsub/"
+
+	otterTopicPrefix = "/otter/"
 )
 
 var (
@@ -35,16 +38,6 @@ func (o *Otter) setupPubSub(ctx context.Context) error {
 	}
 	o.pubsub = psub
 
-	// ppsub, err := pubsub.NewGossipSub(ctx, o.p2p,
-	// 	pubsub.WithDiscovery(disco, pubsub.WithDiscoveryOpts(discovery.TTL(1*time.Second))),
-	// 	pubsub.WithSeenMessagesTTL(2*time.Minute),
-	// )
-	// if err != nil {
-	// 	return fmt.Errorf("initing public pubsub: %w", err)
-	// }
-
-	// o.publicPubsub = ppsub
-
 	pubsubPeerFilters = append(pubsubPeerFilters,
 		o.syncerPubSubFilter,
 		o.metricsPubSubFilter,
@@ -54,10 +47,15 @@ func (o *Otter) setupPubSub(ctx context.Context) error {
 }
 
 func (o *Otter) pubsubChainFilter(peer peer.ID, topic string) bool {
+	if !strings.HasPrefix(topic, otterTopicPrefix) {
+		return true
+	}
+
 	o.logger.Debug("run filtering for pubsub peer", zap.String("topic", topic), zap.Any("peer", peer))
 
 	for _, filter := range pubsubPeerFilters {
 		if filter(peer, topic) {
+			o.logger.Debug("peer allowed", zap.Any("topic", topic), zap.Any("peer", peer.String()))
 			return true
 		}
 	}

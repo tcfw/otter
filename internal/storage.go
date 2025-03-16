@@ -392,6 +392,28 @@ func (o *Otter) apiHandle_DistStorage_PinInfo(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(info)
 }
 
+func (o *Otter) apiHandle_DistStorage_Metrics(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	id, err := v1api.GetAuthIDFromContext(ctx)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	metrics, err := o.getCollectorOrNew(id)
+	if err != nil {
+		apiJSONError(w, err)
+		return
+	}
+
+	metrics.lastMu.RLock()
+	defer metrics.lastMu.RUnlock()
+
+	w.Header().Add("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics.last)
+}
+
 func (o *Otter) apiHandle_DistStorage_ListPins(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

@@ -36,8 +36,7 @@ type Otter struct {
 	p2p host.Host
 	dht *dualdht.DHT
 
-	pubsub       *pubsub.PubSub
-	publicPubsub *pubsub.PubSub
+	pubsub *pubsub.PubSub
 
 	ipld ipld.DAGService
 	mdns mdns.Service
