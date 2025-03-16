@@ -14,6 +14,7 @@ const (
 	P2P_HostKey        ConfigKey = "p2p.hostKey"
 	P2P_BootstrapAddrs ConfigKey = "p2p.bootstrapAddrs"
 	P2P_NAT            ConfigKey = "p2p.nat"
+	P2P_DHT_ClientMode ConfigKey = "p2p.dht.clientMode"
 
 	Plugins_LoadDir ConfigKey = "plugins.loadDir"
 

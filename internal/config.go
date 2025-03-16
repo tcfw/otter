@@ -19,9 +19,10 @@ var (
 			"/ip6/::/udp/9696/quic-v1",
 			"/ip6/::/udp/9696/quic-v1/webtransport",
 		},
-		config.Plugins_LoadDir: "./plugins",
-		config.Storage_Dir:     "./data",
-		config.P2P_NAT:         true,
+		config.Plugins_LoadDir:    "./plugins",
+		config.Storage_Dir:        "./data",
+		config.P2P_NAT:            true,
+		config.P2P_DHT_ClientMode: false,
 		config.API_ListenAddrs: []string{
 			"/ip4/127.0.0.1/tcp/9697",
 			"/ip6/::1/tcp/9697",
