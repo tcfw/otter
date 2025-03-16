@@ -190,16 +190,13 @@ func (o *Otter) setAllowedSyncerPeers(ctx context.Context, pubk id.PublicID, pee
 }
 
 func (o *Otter) GetOrNewAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer, error) {
-	accountSyncersMu.RLock()
-	ds, ok := accountSyncers[pubk]
-	accountSyncersMu.RUnlock()
+	accountSyncersMu.Lock()
+	defer accountSyncersMu.Unlock()
 
+	ds, ok := accountSyncers[pubk]
 	if ok {
 		return ds, nil
 	}
-
-	accountSyncersMu.Lock()
-	defer accountSyncersMu.Unlock()
 
 	nds, err := o.newAccountSyncer(ctx, pubk)
 	if err != nil {
@@ -208,7 +205,6 @@ func (o *Otter) GetOrNewAccountSyncer(ctx context.Context, pubk id.PublicID) (*s
 
 	accountSyncers[pubk] = nds
 	return nds, nil
-
 }
 
 func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer, error) {
@@ -274,7 +270,10 @@ func (o *Otter) newAccountSyncer(ctx context.Context, pubk id.PublicID) (*syncer
 }
 
 func (o *Otter) StopAccountSyncer(ctx context.Context, pubk id.PublicID) error {
+	accountSyncersMu.RLock()
 	ds, ok := accountSyncers[pubk]
+	accountSyncersMu.RUnlock()
+
 	if !ok {
 		return errors.New("account syncer not found")
 	}

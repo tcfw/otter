@@ -72,15 +72,11 @@ func (o *Otter) metricsPubSubFilter(pid peer.ID, topic string) bool {
 		return false
 	}
 
-	logger.Debug("checking allowed peers...", zap.Any("topic", topic), zap.Any("peer", pid.String()))
-
 	peers, err := o.getAllowedSyncerPeers(ctx, account)
 	if err != nil {
 		logger.Error("getting allows syncer peers", zap.Error(err))
 		return false
 	}
-
-	logger.Debug("matching allowed peers...", zap.Any("topic", topic), zap.Any("peer", pid.String()))
 
 	for _, peer := range peers {
 		if peer == pid {
