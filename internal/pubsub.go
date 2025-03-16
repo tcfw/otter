@@ -96,6 +96,9 @@ func (pd *DHTPubSubDiscovery) FindPeers(ctx context.Context, ns string, opts ...
 		return nil, err
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	return pd.o.dht.FindProvidersAsync(ctx, cid, options.Limit), nil
 }
 
