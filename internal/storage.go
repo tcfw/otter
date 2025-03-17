@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -24,7 +23,6 @@ import (
 	"github.com/ipfs/go-datastore/query"
 	dsBadger3 "github.com/ipfs/go-ds-badger3"
 	ipld "github.com/ipfs/go-ipld-format"
-	"github.com/jbenet/goprocess"
 	"github.com/libp2p/go-libp2p/core/peer"
 	multihash "github.com/multiformats/go-multihash/core"
 	"github.com/tcfw/otter/internal/storage"
@@ -101,7 +99,7 @@ func (o *Otter) apiHandle_Storage_ListKeys(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(keys)
 }
 
-type cryptoSealUnsealer func(ctx context.Context, b []byte) ([]byte, error)
+// type cryptoSealUnsealer func(ctx context.Context, b []byte) ([]byte, error)
 
 type StorageClasses struct {
 	o *Otter
@@ -109,29 +107,38 @@ type StorageClasses struct {
 
 // Public provides a storage class for a given public key
 // No values or keys are encrypted and objects are assumed to *not* be globally shareable
-func (sc *StorageClasses) System() (datastore.Datastore, error) {
-	return &NamespacedStorage{
-		Datastore: sc.o.ds,
-		logger:    sc.o.logger.Named("system_storage"),
-		ns:        datastore.NewKey(systemKeyPrefix),
-	}, nil
+func (sc *StorageClasses) System() (datastore.Batching, error) {
+	return otter.NewNamespacedStorage(
+		sc.o.ds,
+		datastore.NewKey(systemKeyPrefix),
+		sc.o.logger.Named("system_storage"),
+	)
 }
 
 // Public provides a storage class for a given public key
 // No values or keys are encrypted and objects are assumed to be globally shareable
-func (sc *StorageClasses) Public(pub id.PublicID) (datastore.Datastore, error) {
+func (sc *StorageClasses) Public(pub id.PublicID) (datastore.Batching, error) {
 	syncer, err := sc.o.GetOrNewAccountSyncer(sc.o.ctx, pub)
 	if err != nil {
 		return nil, fmt.Errorf("getting account syncer: %w", err)
 	}
 
-	return &NamespacedStorage{
-		Datastore:  syncer.publicSyncer,
-		logger:     sc.o.logger.Named("public_storage"),
-		ns:         datastore.NewKey(publicKeyPrefix + string(pub)),
-		putHook:    syncer.AddPutHook,
-		deleteHook: syncer.AddDeleteHook,
-	}, nil
+	return otter.NewNamespacedStorage(
+		syncer.publicSyncer,
+		datastore.NewKey(publicKeyPrefix+string(pub)),
+		sc.o.logger.Named("public_storage"),
+		otter.WithPutHook(syncer.AddPutHook),
+		otter.WithDeleteHook(syncer.AddDeleteHook),
+	)
+}
+
+func (sc *StorageClasses) PrivateFromPublic(pk id.PublicID) (datastore.Batching, error) {
+	privk, err := sc.o.getPK(sc.o.ctx, pk)
+	if err != nil {
+		return nil, err
+	}
+
+	return sc.Private(privk)
 }
 
 // Private provides a storage class for a given private key
@@ -139,7 +146,7 @@ func (sc *StorageClasses) Public(pub id.PublicID) (datastore.Datastore, error) {
 // Keys are not encrypted
 //
 // Values are assumed to be shareable once sealed
-func (sc *StorageClasses) Private(pk id.PrivateKey) (datastore.Datastore, error) {
+func (sc *StorageClasses) Private(pk id.PrivateKey) (datastore.Batching, error) {
 	pubk, err := pk.PublicKey()
 	if err != nil {
 		return nil, fmt.Errorf("getting public key: %w", err)
@@ -162,194 +169,20 @@ func (sc *StorageClasses) Private(pk id.PrivateKey) (datastore.Datastore, error)
 
 	ad := []byte(pubk)
 
-	ns := &NamespacedStorage{
-		Datastore:  syncer.privateSyncer,
-		logger:     sc.o.logger.Named("private_storage"),
-		ns:         datastore.NewKey(privateKeyPrefix + string(pubk)),
-		seal:       privateStorageSeal(aead, ad),
-		unseal:     privateStorageUnseal(aead, ad),
-		putHook:    syncer.AddPutHook,
-		deleteHook: syncer.AddDeleteHook,
+	ns, err := otter.NewNamespacedStorage(
+		syncer.privateSyncer,
+		datastore.NewKey(privateKeyPrefix+string(pubk)),
+		sc.o.logger.Named("private_storage"),
+		otter.WithSealer(privateStorageSeal(aead, ad)),
+		otter.WithUnsealer(privateStorageUnseal(aead, ad)),
+		otter.WithPutHook(syncer.AddPutHook),
+		otter.WithDeleteHook(syncer.AddDeleteHook),
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	return ns, nil
-}
-
-// NamespacedStorage provides namespaced and/or encryption functions for a datastore
-type NamespacedStorage struct {
-	datastore.Datastore
-
-	ns     datastore.Key
-	logger *zap.Logger
-
-	seal   cryptoSealUnsealer
-	unseal cryptoSealUnsealer
-
-	putHook    func(syncerPutHook)
-	deleteHook func(syncerDeleteHook)
-}
-
-func trimNamespacePrefix(prefix datastore.Key, k datastore.Key) datastore.Key {
-	return datastore.NewKey(strings.TrimPrefix(k.String(), prefix.String()))
-}
-
-func (nss *NamespacedStorage) PutHook(f syncerPutHook) {
-	nss.putHook(func(k datastore.Key, b []byte) {
-		if k.IsDescendantOf(nss.ns) {
-			f(trimNamespacePrefix(nss.ns, k), b)
-		}
-	})
-}
-
-func (nss *NamespacedStorage) DeleteHook(f syncerDeleteHook) {
-	nss.deleteHook(func(k datastore.Key) {
-		if k.IsDescendantOf(nss.ns) {
-			f(trimNamespacePrefix(nss.ns, k))
-		}
-	})
-}
-
-// formatKey wraps the key with the storage class namespace
-func (nss *NamespacedStorage) formatKey(k datastore.Key) datastore.Key {
-	return nss.ns.Child(k)
-}
-
-// Get retreives a value for the given value from the datastore
-// unsealing the value if configured
-func (nss *NamespacedStorage) Get(ctx context.Context, k datastore.Key) ([]byte, error) {
-	val, err := nss.Datastore.Get(ctx, nss.formatKey(k))
-	if err != nil {
-		return nil, err
-	}
-
-	if nss.unseal != nil {
-		unsealedVal, err := nss.unseal(ctx, val)
-		if err != nil {
-			return nil, fmt.Errorf("unsealing value: %w", err)
-		}
-		return unsealedVal, nil
-	}
-
-	return val, nil
-}
-
-// Has returns whether the `key` is mapped to a `value`.
-func (nss *NamespacedStorage) Has(ctx context.Context, k datastore.Key) (bool, error) {
-	return nss.Datastore.Has(ctx, nss.formatKey(k))
-}
-
-// Put adds a key/value to the datastore
-// sealing the value if configured
-func (nss *NamespacedStorage) Put(ctx context.Context, k datastore.Key, val []byte) error {
-	if nss.seal != nil {
-		sealedVal, err := nss.seal(ctx, val)
-		if err != nil {
-			return fmt.Errorf("sealing value: %w", err)
-		}
-		val = sealedVal
-	}
-
-	return nss.Datastore.Put(ctx, nss.formatKey(k), val)
-}
-
-// Search finds keys in the datastore with the prefix
-func (nss *NamespacedStorage) Query(ctx context.Context, q query.Query) (query.Results, error) {
-	q.Prefix = nss.formatKey(datastore.NewKey(q.Prefix)).String()
-
-	r, err := nss.Datastore.Query(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-
-	return &NamespacedQueryResults{ctx, nss, q, r}, nil
-}
-
-func (nss *NamespacedStorage) Close() error {
-	return nil
-}
-
-// Delete removes the given key from the datastore
-func (nss *NamespacedStorage) Delete(ctx context.Context, k datastore.Key) error {
-	return nss.Datastore.Delete(ctx, nss.formatKey(k))
-}
-
-type NamespacedQueryResults struct {
-	ctx context.Context
-	nss *NamespacedStorage
-	q   query.Query
-	r   query.Results
-}
-
-func (nsr *NamespacedQueryResults) Query() query.Query {
-	return nsr.q
-}
-
-func (nsr *NamespacedQueryResults) Next() <-chan query.Result {
-	ch := make(chan query.Result)
-
-	go func() {
-		defer close(ch)
-
-		for r := range nsr.r.Next() {
-			if nsr.nss.unseal != nil {
-				v, err := nsr.nss.unseal(nsr.ctx, r.Value)
-				if err != nil {
-					r.Error = err
-				} else {
-					r.Value = v
-				}
-			}
-			r.Key = strings.TrimPrefix(r.Key, nsr.nss.ns.String())
-			ch <- r
-		}
-	}()
-
-	return ch
-}
-
-func (nsr *NamespacedQueryResults) NextSync() (query.Result, bool) {
-	val, ok := nsr.r.NextSync()
-
-	if nsr.nss.unseal != nil {
-		v, err := nsr.nss.unseal(nsr.ctx, val.Value)
-		if err != nil {
-			val.Error = err
-			return val, false
-		} else {
-			val.Value = v
-		}
-	}
-
-	val.Key = strings.TrimPrefix(val.Key, nsr.nss.ns.String())
-
-	return val, ok
-}
-
-func (nsr *NamespacedQueryResults) Rest() ([]query.Entry, error) {
-	var es []query.Entry
-
-	for r := range nsr.r.Next() {
-		if nsr.nss.unseal != nil {
-			v, err := nsr.nss.unseal(nsr.ctx, r.Value)
-			if err != nil {
-				return nil, err
-			}
-			r.Value = v
-		}
-
-		r.Key = strings.TrimPrefix(r.Key, nsr.nss.ns.String())
-		es = append(es, r.Entry)
-	}
-
-	return es, nil
-}
-
-func (nsr *NamespacedQueryResults) Close() error {
-	return nsr.r.Close()
-}
-
-func (nsr *NamespacedQueryResults) Process() goprocess.Process {
-	return nsr.r.Process()
 }
 
 func (o *Otter) apiHandle_DistStorage_PinInfo(w http.ResponseWriter, r *http.Request) {
@@ -552,6 +385,10 @@ func (o *Otter) apiHandle_DistStorage_Get(w http.ResponseWriter, r *http.Request
 	}
 }
 
+func (o *Otter) DistributedStorage(pubk id.PublicID) (otter.DistributedStorage, error) {
+	return o.GetOrNewDistributedStorageForKey(o.ctx, pubk)
+}
+
 func (o *Otter) GetOrNewDistributedStorageForKey(ctx context.Context, pub id.PublicID) (*distributedStorage, error) {
 	distStorageSyncersMu.RLock()
 	ds, ok := distStorageSyncers[pub]
@@ -571,12 +408,15 @@ func (o *Otter) GetOrNewDistributedStorageForKey(ctx context.Context, pub id.Pub
 
 	logger := o.logger.Named("dist_storage")
 
-	pinDS := &NamespacedStorage{
-		Datastore:  sync.privateSyncer,
-		ns:         datastore.NewKey("pins"),
-		logger:     logger,
-		putHook:    sync.AddPutHook,
-		deleteHook: sync.AddDeleteHook,
+	pinDS, err := otter.NewNamespacedStorage(
+		sync.privateSyncer,
+		datastore.NewKey("pins"),
+		logger,
+		otter.WithPutHook(sync.AddPutHook),
+		otter.WithDeleteHook(sync.AddDeleteHook),
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	metricsCollector, err := o.getCollectorOrNew(pub)
@@ -648,7 +488,7 @@ type distributedStorage struct {
 	logger   *zap.Logger
 
 	pubID         id.PublicID
-	pinManagement datastore.Datastore
+	pinManagement datastore.Batching
 	ipfs          *ipfslite.Peer
 	metrics       *Collector
 
@@ -1150,6 +990,10 @@ func (ds *distributedStorage) AddCid(ctx context.Context, c cid.Cid, opts ...ott
 		return fmt.Errorf("not enough peers to meet minReplica count, have %d peers, want %d", len(peers), cfg.MinReplicas)
 	}
 
+	if cfg.MaxReplicas == 0 {
+		cfg.MaxReplicas = uint32(len(peers))
+	}
+
 	peers = peers[:min(uint32(len(peers)), cfg.MaxReplicas)]
 
 	bs, err := getDagBlockSize(ctx, c, ds.ipfs)
@@ -1165,11 +1009,16 @@ func (ds *distributedStorage) AddCid(ctx context.Context, c cid.Cid, opts ...ott
 		TotalSize:   uint64(bs),
 	}
 
+	batch, err := ds.pinManagement.Batch(ctx)
+	if err != nil {
+		return err
+	}
+
 	var errs error
 
 	for _, peer := range peers {
 		info.PinPeers = append(info.PinPeers, peer.String())
-		err := ds.assignCidToPeer(ctx, c, peer)
+		err := ds.assignCidToPeer(ctx, batch, c, peer)
 		if err != nil {
 			errs = errors.Join(errs, err)
 		}
@@ -1181,7 +1030,11 @@ func (ds *distributedStorage) AddCid(ctx context.Context, c cid.Cid, opts ...ott
 	}
 
 	pinSetInfoKey := datastore.KeyWithNamespaces([]string{cidPinPrefix, c.String()})
-	return ds.pinManagement.Put(ctx, pinSetInfoKey, b)
+	if err := batch.Put(ctx, pinSetInfoKey, b); err != nil {
+		return err
+	}
+
+	return batch.Commit(ctx)
 }
 
 func getDagBlockSize(ctx context.Context, c cid.Cid, ng ipld.NodeGetter) (uint, error) {
@@ -1204,7 +1057,7 @@ func getDagBlockSize(ctx context.Context, c cid.Cid, ng ipld.NodeGetter) (uint, 
 	return size, nil
 }
 
-func (ds *distributedStorage) assignCidToPeer(ctx context.Context, c cid.Cid, p peer.ID) error {
+func (ds *distributedStorage) assignCidToPeer(ctx context.Context, batch datastore.Batch, c cid.Cid, p peer.ID) error {
 	info := &pb.PinState{
 		Pinned:   false,
 		Indirect: false,
@@ -1218,7 +1071,7 @@ func (ds *distributedStorage) assignCidToPeer(ctx context.Context, c cid.Cid, p 
 
 	k := datastore.KeyWithNamespaces([]string{nodePinPrefix, p.String(), c.String()})
 
-	return ds.pinManagement.Put(ctx, k, b)
+	return batch.Put(ctx, k, b)
 }
 
 func newEncryptedChunker(spl chunker.Splitter, pk id.PrivateKey) (*encryptedChunker, error) {
@@ -1244,7 +1097,7 @@ func newEncryptedChunker(spl chunker.Splitter, pk id.PrivateKey) (*encryptedChun
 
 type encryptedChunker struct {
 	splitter chunker.Splitter
-	cipher   cryptoSealUnsealer
+	cipher   func(ctx context.Context, b []byte) ([]byte, error)
 }
 
 func (es *encryptedChunker) Reader() io.Reader {

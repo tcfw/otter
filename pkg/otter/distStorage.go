@@ -6,7 +6,6 @@ import (
 	"io"
 
 	"github.com/ipfs/go-cid"
-	"github.com/tcfw/otter/pkg/id"
 	"github.com/tcfw/otter/pkg/otter/pb"
 )
 
@@ -15,8 +14,8 @@ type DistributedStorage interface {
 	AddFromReader(context.Context, io.Reader, ...AddOption) (cid.Cid, error)
 	AddCid(context.Context, cid.Cid, ...AddOption) error
 
-	Get(context.Context, cid.Cid) (io.Reader, error)
-	GetEncrypted(context.Context, cid.Cid, id.PublicID) (io.Reader, error)
+	Get(context.Context, cid.Cid) (io.ReadSeekCloser, error)
+	GetEncrypted(context.Context, cid.Cid) (io.ReadCloser, error)
 	Info(context.Context, cid.Cid) (*pb.PinInfo, error)
 
 	Remove(context.Context, cid.Cid) error

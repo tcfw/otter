@@ -50,9 +50,9 @@ type Otter interface {
 	// replicating to all of the key's nodes via CRDT
 	Storage() StorageClasses
 
-	//Private block storage per private key,
+	//Public block storage per key,
 	// distributing amoungst the key's nodes
-	// DistributedStorage(id.PrivateKey) DistributedStorage
+	DistributedStorage(id.PublicID) (DistributedStorage, error)
 
 	//Public node IPLD service from ipfs-lite
 	//to the underlying node
@@ -69,9 +69,10 @@ type Storage interface {
 }
 
 type StorageClasses interface {
-	Public(pub id.PublicID) (datastore.Datastore, error)
-	Private(pk id.PrivateKey) (datastore.Datastore, error)
-	System() (datastore.Datastore, error)
+	Public(pub id.PublicID) (datastore.Batching, error)
+	Private(pk id.PrivateKey) (datastore.Batching, error)
+	PrivateFromPublic(pk id.PublicID) (datastore.Batching, error)
+	System() (datastore.Batching, error)
 }
 
 type Protocols interface {

@@ -13,6 +13,7 @@ import (
 
 	v1api "github.com/tcfw/otter/pkg/api"
 	"github.com/tcfw/otter/pkg/id"
+	"github.com/tcfw/otter/pkg/otter"
 
 	"github.com/ipfs/go-datastore"
 	crdt "github.com/ipfs/go-ds-crdt"
@@ -30,9 +31,6 @@ var (
 	accountSyncersMu sync.RWMutex
 )
 
-type syncerPutHook func(datastore.Key, []byte)
-type syncerDeleteHook func(datastore.Key)
-
 type syncer struct {
 	ctx           context.Context
 	cancel        chan struct{}
@@ -41,8 +39,8 @@ type syncer struct {
 	privateSyncer *crdt.Datastore
 
 	hookMu      sync.RWMutex
-	putHooks    []syncerPutHook
-	deleteHooks []syncerDeleteHook
+	putHooks    []otter.PutHook
+	deleteHooks []otter.DeleteHook
 }
 
 func (s *syncer) Close() error {
@@ -59,14 +57,14 @@ func (s *syncer) Close() error {
 	return nil
 }
 
-func (s *syncer) AddPutHook(f syncerPutHook) {
+func (s *syncer) AddPutHook(f otter.PutHook) {
 	s.hookMu.Lock()
 	defer s.hookMu.Unlock()
 
 	s.putHooks = append(s.putHooks, f)
 }
 
-func (s *syncer) AddDeleteHook(f syncerDeleteHook) {
+func (s *syncer) AddDeleteHook(f otter.DeleteHook) {
 	s.hookMu.Lock()
 	defer s.hookMu.Unlock()
 

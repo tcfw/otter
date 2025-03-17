@@ -171,7 +171,7 @@ func privateStorageAEAD(sk []byte) (cipher.AEAD, error) {
 }
 
 // privateStorageSeal seals protected data via AEAD
-func privateStorageSeal(ci cipher.AEAD, ad []byte) cryptoSealUnsealer {
+func privateStorageSeal(ci cipher.AEAD, ad []byte) func(ctx context.Context, b []byte) ([]byte, error) {
 	return func(ctx context.Context, b []byte) ([]byte, error) {
 		nSize := ci.NonceSize()
 
@@ -188,7 +188,7 @@ func privateStorageSeal(ci cipher.AEAD, ad []byte) cryptoSealUnsealer {
 }
 
 // privateStorageUnseal unseals protected data via AEAD
-func privateStorageUnseal(ci cipher.AEAD, ad []byte) cryptoSealUnsealer {
+func privateStorageUnseal(ci cipher.AEAD, ad []byte) func(ctx context.Context, b []byte) ([]byte, error) {
 	return func(ctx context.Context, b []byte) ([]byte, error) {
 		nSize := ci.NonceSize()
 

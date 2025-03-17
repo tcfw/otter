@@ -12,7 +12,6 @@ import (
 	"github.com/ipfs/boxo/ipld/unixfs/importer/balanced"
 	"github.com/ipfs/boxo/ipld/unixfs/importer/helpers"
 	"github.com/ipfs/go-cid"
-	"github.com/ipfs/go-datastore"
 	ipld "github.com/ipfs/go-ipld-format"
 	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/assert"
@@ -174,9 +173,4 @@ func TestDagDecryptingNodeGetter(t *testing.T) {
 	}
 
 	assert.Equal(t, inputData, outputData)
-}
-
-func TestTrimPrefixDatasetKey(t *testing.T) {
-	res := trimNamespacePrefix(datastore.NewKey("pins"), datastore.NewKey("/pins/p/test"))
-	assert.Equal(t, datastore.NewKey("/p/test"), res)
 }

@@ -143,7 +143,7 @@ func (eh *EmailHandler) sendEnvlToPeer(ctx context.Context, job *queueJob, p pee
 		return err
 	}
 
-	if p.String() == eh.o.HostID().String() {
+	if p == eh.o.HostID() {
 		//loopback to self
 		return eh.handleRequest(p, req)
 	}

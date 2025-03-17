@@ -1,9 +1,16 @@
 package email
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"net/mail"
+	"time"
 
+	"github.com/ipfs/go-datastore"
+	"github.com/multiformats/go-multihash"
+	"github.com/tcfw/otter/pkg/id"
 	"github.com/tcfw/otter/pkg/otter"
 	"github.com/tcfw/otter/pkg/protos/email/pb"
 
@@ -134,6 +141,21 @@ func (e *EmailHandler) validateSignature(p peer.ID, req *pb.Request) error {
 }
 
 func (e *EmailHandler) handleReceiveEmail(p peer.ID, req *pb.ReceiveEmail) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	addr, err := mail.ParseAddress(req.To)
+	if err != nil {
+		return err
+	}
+
+	publicID, _, err := SplitAddrUserDomain(addr.Address)
+	if err != nil {
+		return err
+	}
+
+	pid := id.PublicID(publicID)
+
 	spamPrependStr, isSpam, err := e.checkSpam(p, req)
 	if err != nil {
 		return err
@@ -146,5 +168,61 @@ func (e *EmailHandler) handleReceiveEmail(p peer.ID, req *pb.ReceiveEmail) error
 	}
 
 	e.l.Info("got email", zap.String("msg", string(req.Envelope)))
-	return nil
+
+	msgId, err := messageID(req.Envelope)
+	if err != nil {
+		return err
+	}
+
+	privStore, err := e.o.Storage().PrivateFromPublic(pid)
+	if err != nil {
+		return err
+	}
+
+	ds, err := otter.NewNamespacedStorage(privStore, datastore.NewKey("/emails/"), e.l)
+	if err != nil {
+		return err
+	}
+	k := datastore.KeyWithNamespaces([]string{"email", msgId})
+
+	exists, err := ds.Has(ctx, k)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return errors.New("email already received")
+	}
+
+	distStore, err := e.o.DistributedStorage(pid)
+	if err != nil {
+		return err
+	}
+
+	c, err := distStore.AddFromSlice(context.Background(), req.Envelope, otter.WithEncrypted(), otter.WithMinReplicas(1))
+	if err != nil {
+		return err
+	}
+
+	return ds.Put(ctx, k, c.Bytes())
+}
+
+func messageID(envl []byte) (string, error) {
+	msg, err := mail.ReadMessage(bytes.NewReader(envl))
+	if err != nil {
+		return "", err
+	}
+
+	d := envl
+
+	envlMsgID := msg.Header.Get("message-id")
+	if envlMsgID != "" {
+		d = []byte(envlMsgID)
+	}
+
+	mh, err := multihash.Sum(d, multihash.SHA2_256, -1)
+	if err != nil {
+		return "", err
+	}
+
+	return mh.String(), nil
 }
