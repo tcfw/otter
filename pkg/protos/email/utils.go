@@ -12,5 +12,8 @@ func SplitAddrUserDomain(addr string) (string, string, error) {
 	}
 
 	local, domain := addr[:at], addr[at+1:]
-	return local, domain, nil
+
+	localParts := strings.SplitN(local, "+", 2)
+
+	return localParts[0], domain, nil
 }

@@ -224,5 +224,5 @@ func messageID(envl []byte) (string, error) {
 		return "", err
 	}
 
-	return mh.String(), nil
+	return mh.B58String(), nil
 }
