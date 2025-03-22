@@ -22,6 +22,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
+	"github.com/tcfw/otter/internal/ident4"
 	"github.com/tcfw/otter/pkg/config"
 	"github.com/tcfw/otter/pkg/id"
 	"github.com/tcfw/otter/pkg/otter"
@@ -103,6 +104,10 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 		return nil, fmt.Errorf("initing ipfs-lite: %w", err)
 	}
 	o.ipld = ipfs
+
+	if err := ident4.Setup(o.p2p, o.logger.Named("ident4"), o.Crypto()); err != nil {
+		return nil, err
+	}
 
 	go o.watchPeers()
 	go o.publishIPNS(ctx)
