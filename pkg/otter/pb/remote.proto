@@ -12,6 +12,7 @@ message RemoteRPCRequest {
 }
 
 message RemoteRPCResponse {
-	map<string,string> headers = 1;
-	bytes body = 2;
+	uint32 code = 1;
+	map<string,string> headers = 2;
+	bytes body = 3;
 }

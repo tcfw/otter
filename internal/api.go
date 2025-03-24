@@ -126,9 +126,8 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 		o.logger.Named("rpc").Error("reading protobuf req", zap.Error(err))
 		return
 	}
-	
+
 	o.logger.Named("rpc").Info("got req", zap.Any("req", pReq))
-	
 
 	reqHeaders := http.Header{}
 	for k, v := range pReq.Headers {
@@ -167,6 +166,7 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 		Headers: make(map[string]string),
 	}
 
+	resp.Code = uint32(w.Code)
 	resp.Body = w.Body.Bytes()
 
 	for k, vv := range w.Header() {
