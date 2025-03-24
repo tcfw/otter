@@ -102,15 +102,19 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 		return
 	}
 
+	o.logger.Named("rpc").Info("new stream open and reading body", zap.Any("size", len(buf)))
+
 	reqSize := binary.LittleEndian.Uint32(buf)
 	if reqSize > maxReqSize {
 		s.Reset()
+		o.logger.Named("rpc").Info("closing req stream due to req size", zap.Any("req size", reqSize))
 		return
 	}
 
 	reqBuf := make([]byte, reqSize)
 	if _, err := s.Read(reqBuf); err != nil {
 		s.Reset()
+		o.logger.Named("rpc").Error("reading buf", zap.Error(err))
 		return
 	}
 
@@ -119,8 +123,12 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 	err := proto.Unmarshal(reqBuf, pReq)
 	if err != nil {
 		s.Reset()
+		o.logger.Named("rpc").Error("reading protobuf req", zap.Error(err))
 		return
 	}
+	
+	o.logger.Named("rpc").Info("got req", zap.Any("req", pReq))
+	
 
 	reqHeaders := http.Header{}
 	for k, v := range pReq.Headers {
@@ -176,14 +184,7 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 		return
 	}
 
-	buf = buf[:0]
-
-	_, err = s.Write(binary.LittleEndian.AppendUint32(buf, uint32(len(b))))
-	if err != nil {
-		s.Reset()
-		o.logger.Named("rpc").Error("sending rpc response size", zap.Error(err))
-		return
-	}
+	o.logger.Named("rpc").Info("sending response", zap.Any("resp", resp))
 
 	_, err = s.Write(b)
 	if err != nil {
