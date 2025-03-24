@@ -1,17 +1,26 @@
 package internal
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
 
 	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/query"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/tcfw/otter/internal/utils"
 	"github.com/tcfw/otter/internal/version"
 	v1api "github.com/tcfw/otter/pkg/api"
+	"github.com/tcfw/otter/pkg/otter/pb"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 
@@ -21,10 +30,15 @@ import (
 	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/tcfw/otter/pkg/config"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
 	tlsCachePrefix = "acme"
+
+	remoteRPCProtoID  = "/otter/rpc/0.0.0"
+	maxReqSize        = 2048
+	rpcReqReadTimeout = 10 * time.Second
 )
 
 func (o *Otter) setupAPI(ctx context.Context) error {
@@ -61,7 +75,122 @@ func (o *Otter) setupAPI(ctx context.Context) error {
 		}()
 	}
 
+	o.p2p.SetStreamHandler(remoteRPCProtoID, o.handleRemoteRPCStream)
+
 	return nil
+}
+
+func (o *Otter) handleRemoteRPCStream(s network.Stream) {
+	if err := s.Scope().SetService("rpc"); err != nil {
+		o.logger.Debug("error attaching stream to ident4 service", zap.Error(err))
+		s.Reset()
+		return
+	}
+
+	if err := s.Scope().ReserveMemory(maxReqSize, network.ReservationPriorityAlways); err != nil {
+		o.logger.Debug("error reserving memory for stream", zap.Error(err))
+		s.Reset()
+		return
+	}
+	defer s.Scope().ReleaseMemory(maxReqSize)
+
+	s.SetReadDeadline(time.Now().Add(rpcReqReadTimeout))
+
+	buf := make([]byte, 4)
+	if _, err := s.Read(buf); err != nil {
+		s.Reset()
+		return
+	}
+
+	reqSize := binary.LittleEndian.Uint32(buf)
+	if reqSize > maxReqSize {
+		s.Reset()
+		return
+	}
+
+	reqBuf := make([]byte, reqSize)
+	if _, err := s.Read(reqBuf); err != nil {
+		s.Reset()
+		return
+	}
+
+	pReq := &pb.RemoteRPCRequest{}
+
+	err := proto.Unmarshal(reqBuf, pReq)
+	if err != nil {
+		s.Reset()
+		return
+	}
+
+	reqHeaders := http.Header{}
+	for k, v := range pReq.Headers {
+		reqHeaders.Add(k, v)
+	}
+
+	u, err := url.Parse(pReq.Rpc)
+	if err != nil {
+		o.logger.Named("rpc").Error("parsing URL", zap.Error(err))
+		s.Reset()
+		return
+	}
+
+	if u.Path == "/api/keys/import" {
+		o.logger.Named("rpc").Warn("attempt to import key from remote")
+		s.Close()
+		return
+	}
+
+	r := &http.Request{
+		URL:           u,
+		Method:        strings.ToUpper(pReq.Method),
+		Header:        reqHeaders,
+		Body:          io.NopCloser(bytes.NewBuffer(pReq.Body)),
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		ContentLength: int64(reqSize),
+	}
+
+	w := httptest.NewRecorder()
+
+	o.apiRouter.ServeHTTP(w, r)
+
+	resp := &pb.RemoteRPCResponse{
+		Headers: make(map[string]string),
+	}
+
+	resp.Body = w.Body.Bytes()
+
+	for k, vv := range w.Header() {
+		if len(vv) == 0 {
+			continue
+		}
+
+		resp.Headers[k] = vv[0]
+	}
+
+	b, err := proto.Marshal(resp)
+	if err != nil {
+		s.Reset()
+		o.logger.Named("rpc").Error("marshaling rpc response", zap.Error(err))
+		return
+	}
+
+	buf = buf[:0]
+
+	_, err = s.Write(binary.LittleEndian.AppendUint32(buf, uint32(len(b))))
+	if err != nil {
+		s.Reset()
+		o.logger.Named("rpc").Error("sending rpc response size", zap.Error(err))
+		return
+	}
+
+	_, err = s.Write(b)
+	if err != nil {
+		s.Reset()
+		o.logger.Named("rpc").Error("sending rpc response", zap.Error(err))
+		return
+	}
 }
 
 func (o *Otter) initAPIRouter() (*mux.Router, error) {

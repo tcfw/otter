@@ -8,6 +8,8 @@ PLUGINS=$(shell ls ./pkg/protos/)
 
 PROTOBUFS=$(shell find ./pkg -iname "*.proto") $(shell find ./internal -iname "*.proto")
 
+JSPROTOBUFS=js_./pkg/otter/pb/remote.proto
+
 .PHONY: run
 run:
 	go run -ldflags="${LDFLAGS}" .
@@ -27,8 +29,15 @@ ${PLUGINS}:
 plugins: ${PLUGINS}
 
 .PHONY: protos
-protos: $(PROTOBUFS)
+protos: $(PROTOBUFS) jsprotos
+
+.PHONY: jsprotos
+jsprotos: $(JSPROTOBUFS)
 
 .PHONY: $(PROTOBUFS)
 $(PROTOBUFS):
 	protoc --go_out=. --go_opt=paths=source_relative $@
+
+.PHONY: $(JSPROTOBUFS)
+$(JSPROTOBUFS):
+	protoc --js_out=import_style=commonjs,binary:./ui/web/src/components/protos $(patsubst js_%,%,$@)

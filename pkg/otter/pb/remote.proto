@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package remote;
+
+option go_package = "github.com/tcfw/otter/pkg/otter/pb";
+
+message RemoteRPCRequest {
+	string method = 1;
+	string rpc = 2;
+	map<string,string> headers = 3;
+	bytes body = 4;
+}
+
+message RemoteRPCResponse {
+	map<string,string> headers = 1;
+	bytes body = 2;
+}
