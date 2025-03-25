@@ -597,7 +597,7 @@ func (o *Otter) publishIPNSForKey(ctx context.Context, key id.PrivateKey) error 
 		o.p2p.ConnManager().Protect(p, "storage_syncer")
 	}
 
-	record, err := ipns.NewRecord(cpk, p, 2, time.Now().Add(ipns.DefaultRecordLifetime), ipns.DefaultRecordTTL, ipns.WithOtterNodes(peerList))
+	record, err := ipns.NewRecord(cpk, p, 3, time.Now().Add(ipns.DefaultRecordLifetime), ipns.DefaultRecordTTL, ipns.WithOtterNodes(peerList))
 	if err != nil {
 		return fmt.Errorf("encoding ipns record: %w", err)
 	}
