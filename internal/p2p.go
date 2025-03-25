@@ -617,7 +617,7 @@ func (o *Otter) publishIPNSForKey(ctx context.Context, key id.PrivateKey) error 
 	rk := ns.RoutingKey()
 
 	go func() {
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
 		defer cancel()
 
 		o.logger.Debug("publishing IPNS record for key", zap.Any("RK", path.String()))

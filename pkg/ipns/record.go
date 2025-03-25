@@ -114,7 +114,11 @@ func (rec *Record) OtterNodes() ([]peer.ID, error) {
 	peers := []peer.ID{}
 
 	for _, v := range value {
-		peers = append(peers, peer.ID(v))
+		pid, err := peer.Decode(v)
+		if err != nil {
+			continue
+		}
+		peers = append(peers, pid)
 	}
 
 	return peers, nil
