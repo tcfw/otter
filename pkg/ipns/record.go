@@ -379,8 +379,8 @@ func createNode(value path.Path, seq uint64, eol time.Time, ttl time.Duration, o
 			return nil, err
 		}
 
-		for _, n := range otterNodes {
-			if err := onl.AssembleValue().AssignString(string(n)); err != nil {
+		for _, peer := range otterNodes {
+			if err := onl.AssembleValue().AssignString(peer.String()); err != nil {
 				return nil, err
 			}
 		}

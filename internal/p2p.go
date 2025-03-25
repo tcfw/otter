@@ -452,6 +452,10 @@ func (o *Otter) apiHandle_P2P_Peers(w http.ResponseWriter, r *http.Request) {
 	resp := &v1api.PeerListResponse{}
 
 	for _, peer := range o.p2p.Network().Peers() {
+		if o.p2p.Network().Connectedness(peer) != network.Connected {
+			continue
+		}
+
 		pi := ps.PeerInfo(peer)
 		if len(pi.Addrs) == 0 {
 			continue
