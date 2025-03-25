@@ -192,6 +192,7 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 		o.logger.Named("rpc").Error("sending rpc response", zap.Error(err))
 		return
 	}
+	s.Close()
 }
 
 func (o *Otter) initAPIRouter() (*mux.Router, error) {
@@ -230,7 +231,7 @@ func (o *Otter) initAPIRouter() (*mux.Router, error) {
 
 	apis.HandleFunc("/debug/clear_tls", o.apiHandle_Debug_ClearTLS).Methods(http.MethodPost)
 
-	o.apiRouter = apis
+	o.apiRouter = r
 	return r, nil
 }
 
