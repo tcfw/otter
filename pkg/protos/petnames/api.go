@@ -106,6 +106,28 @@ func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID)
 	return nil, errors.New("not implemented")
 }
 
+func (p *PetnamesHandler) apiHandle_GetProposedName(w http.ResponseWriter, r *http.Request) {
+	auth, err := v1api.GetAuthIDFromContext(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	sc, err := p.ForPublicID(auth)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	name, err := sc.ProposedName()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte(name))
+}
+
 func (p *PetnamesHandler) apiHandle_SetProposedName(w http.ResponseWriter, r *http.Request) {
 	req := &SetProposedNameRequest{}
 
