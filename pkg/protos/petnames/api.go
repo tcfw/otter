@@ -217,6 +217,8 @@ func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID)
 					continue
 				}
 
+				sc.logger.Debug("asking contact for edgenames", zap.Any("req", pub), zap.Any("contact", id))
+
 				sn, tc, uc, err := sc.askIDForEdgeNames(ctx, id, pub, probeProb)
 				if err != nil {
 					sc.logger.Debug("contact lookup on node unsuccesful", zap.Error(err))
