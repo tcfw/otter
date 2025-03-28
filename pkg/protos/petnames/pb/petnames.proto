@@ -55,5 +55,5 @@ message LookupResponse {
 	ErrorCode error = 1;
 	repeated SharedContact sharedNames = 2;
 	repeated string tryContactId = 3;
-	uint64 contactSize = 4;
+	uint32 contactSize = 4;
 }

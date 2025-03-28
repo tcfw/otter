@@ -7,15 +7,22 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/query"
+	"github.com/libp2p/go-msgio/pbio"
+	"github.com/tcfw/otter/internal/ident4"
+	"github.com/tcfw/otter/internal/utils"
 	"github.com/tcfw/otter/pkg/id"
+	"github.com/tcfw/otter/pkg/otter"
 	"github.com/tcfw/otter/pkg/protos/petnames/pb"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1api "github.com/tcfw/otter/pkg/api"
 )
@@ -41,6 +48,7 @@ func (p *PetnamesHandler) ForPublicID(pub id.PublicID) (ScopedClient, error) {
 
 	c := &scopedClient{
 		logger: p.l,
+		o:      p.o,
 		pub:    pub,
 		pubDS:  pubds, privDS: privds,
 		baseKey:        datastore.KeyWithNamespaces([]string{"petnames", string(pub)}),
@@ -52,6 +60,7 @@ func (p *PetnamesHandler) ForPublicID(pub id.PublicID) (ScopedClient, error) {
 
 type scopedClient struct {
 	logger         *zap.Logger
+	o              otter.Otter
 	pub            id.PublicID
 	baseKey        datastore.Key
 	baseContactKey datastore.Key
@@ -157,7 +166,177 @@ func (sc *scopedClient) SearchLocalContacts(ctx context.Context, query string) (
 }
 
 func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID) (<-chan *pb.DOSName, error) {
-	return nil, errors.New("not implemented")
+	cl, err := sc.ListLocalContacts(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(cl) == 0 {
+		return nil, errors.New("no contacts to ask")
+	}
+
+	slices.SortFunc(cl, sortByNumContacts)
+
+	visitedContacts := make(map[id.PublicID]struct{}, 100)
+	var mu sync.Mutex
+
+	idCh := make(chan id.PublicID)
+	tryCh := make(chan []id.PublicID, 50)
+	res := make(chan *pb.DOSName)
+
+	probeProb := maxRequestProbability
+
+	for range 10 {
+		go func() {
+			for id := range idCh {
+				if id == "" {
+					return
+				}
+
+				mu.Lock()
+				_, ok := visitedContacts[id]
+				mu.Unlock()
+				if ok {
+					continue
+				}
+
+				sn, tc, uc, err := sc.askIDForEdgeNames(ctx, id, pub, probeProb)
+				if err != nil {
+					sc.logger.Debug("contact lookup on node unsuccesful", zap.Error(err))
+					continue
+				}
+
+				if err := sc.updateKnownContactCount(ctx, id, uc); err != nil {
+					sc.logger.Debug("failed to update contact count", zap.Error(err))
+				}
+
+				mu.Lock()
+				visitedContacts[id] = struct{}{}
+				mu.Unlock()
+
+				if len(tc) != 0 {
+					select {
+					case tryCh <- tc:
+					default:
+					}
+				}
+
+				for _, s := range sn {
+					if s.Id != string(pub) {
+						continue
+					}
+
+					name := &pb.DOSName{
+						Degree: uint32(maxRequestProbability / probeProb),
+						Name:   s.SharedName,
+					}
+
+					select {
+					case <-ctx.Done():
+						return
+					case res <- name:
+					}
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(idCh)
+		defer close(tryCh)
+		defer close(res)
+
+		for _, c := range cl {
+			select {
+			case <-ctx.Done():
+				return
+			case idCh <- id.PublicID(c.Id):
+			}
+		}
+
+		//After initial probing, lower the number of ordered random
+		// sampling from lookup requests
+		probeProb = maxRequestProbability / 2
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case try := <-tryCh:
+				for _, c := range try {
+					select {
+					case <-ctx.Done():
+						return
+					case idCh <- c:
+					}
+				}
+			}
+		}
+	}()
+
+	return res, nil
+}
+
+func (sc *scopedClient) askIDForEdgeNames(ctx context.Context, pub id.PublicID, contact id.PublicID, prob float64) ([]*pb.SharedContact, []id.PublicID, uint32, error) {
+	nodes, err := sc.o.ResolveOtterNodesForKey(ctx, pub)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	peer, err := utils.FirstOnlinePeer(ctx, nodes, sc.o.Protocols().P2P())
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	s, err := ident4.DialContext(ctx, peer, protoID, pub, sc.pub)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	w := pbio.NewDelimitedWriter(s)
+	r := pbio.NewDelimitedReader(s, reqMaxSize*10)
+	defer w.Close()
+	defer r.Close()
+
+	req := &pb.LookupRequest{
+		Id:                       []string{string(contact)},
+		SuggestedNodeProbability: prob,
+	}
+
+	if err := w.WriteMsg(req); err != nil {
+		return nil, nil, 0, err
+	}
+
+	resp := &pb.LookupResponse{}
+	if err := r.ReadMsg(resp); err != nil {
+		return nil, nil, 0, err
+	}
+
+	if resp.Error != pb.ErrorCode_SUCCESS {
+		return nil, nil, 0, errors.New("node responded with " + resp.Error.String())
+	}
+
+	tryContacts := make([]id.PublicID, 0, len(resp.TryContactId))
+	for _, c := range resp.TryContactId {
+		tryContacts = append(tryContacts, id.PublicID(c))
+	}
+
+	return resp.SharedNames, tryContacts, resp.ContactSize, nil
+}
+
+func (sc *scopedClient) updateKnownContactCount(ctx context.Context, contact id.PublicID, count uint32) error {
+	c, err := sc.GetLocalContact(ctx, contact)
+	if err != nil {
+		if errors.Is(err, datastore.ErrNotFound) {
+			return nil
+		}
+
+		return err
+	}
+
+	c.NumberOfContacts = count
+	c.LastUpdated = timestamppb.Now()
+
+	return sc.SetLocalContact(ctx, c)
 }
 
 func (p *PetnamesHandler) apiHandle_ListContact(w http.ResponseWriter, r *http.Request) {

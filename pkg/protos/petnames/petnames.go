@@ -151,7 +151,7 @@ func (p *PetnamesHandler) handle(s network.Stream) {
 
 	count, err := book.CountLocalContacts(ctx)
 	if err == nil {
-		resp.ContactSize = uint64(count)
+		resp.ContactSize = uint32(count)
 	}
 
 	if len(resp.SharedNames) != len(req.Id) {
@@ -175,16 +175,7 @@ func probabalisticListContactsToTry(ctx context.Context, book ScopedClient, prob
 		return nil, err
 	}
 
-	slices.SortFunc(bl, func(a *pb.Contact, b *pb.Contact) int {
-		switch true {
-		case a.NumberOfContacts > b.NumberOfContacts:
-			return 1
-		case a.NumberOfContacts < b.NumberOfContacts:
-			return -1
-		default:
-			return 0
-		}
-	})
+	slices.SortFunc(bl, sortByNumContacts)
 
 	contacts := []string{}
 
@@ -207,6 +198,17 @@ func probabalisticListContactsToTry(ctx context.Context, book ScopedClient, prob
 	}
 
 	return contacts, nil
+}
+
+func sortByNumContacts(a *pb.Contact, b *pb.Contact) int {
+	switch true {
+	case a.NumberOfContacts > b.NumberOfContacts:
+		return 1
+	case a.NumberOfContacts < b.NumberOfContacts:
+		return -1
+	default:
+		return 0
+	}
 }
 
 func sendError(s network.Stream, errCode pb.ErrorCode) error {
