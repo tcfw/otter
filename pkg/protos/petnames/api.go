@@ -43,18 +43,20 @@ func (p *PetnamesHandler) ForPublicID(pub id.PublicID) (ScopedClient, error) {
 		logger: p.l,
 		pub:    pub,
 		pubDS:  pubds, privDS: privds,
-		baseKey: datastore.KeyWithNamespaces([]string{"petnames", string(pub)}),
+		baseKey:        datastore.KeyWithNamespaces([]string{"petnames", string(pub)}),
+		baseContactKey: datastore.KeyWithNamespaces([]string{"petnames", string(pub), "contacts"}),
 	}
 
 	return c, nil
 }
 
 type scopedClient struct {
-	logger  *zap.Logger
-	pub     id.PublicID
-	baseKey datastore.Key
-	pubDS   datastore.Datastore
-	privDS  datastore.Datastore
+	logger         *zap.Logger
+	pub            id.PublicID
+	baseKey        datastore.Key
+	baseContactKey datastore.Key
+	pubDS          datastore.Datastore
+	privDS         datastore.Datastore
 }
 
 func (sc *scopedClient) ProposedName() (string, error) {
@@ -83,7 +85,7 @@ func (sc *scopedClient) SetProposedName(ctx context.Context, name string) error 
 }
 
 func (sc *scopedClient) SetLocalContact(ctx context.Context, c *pb.Contact) error {
-	k := sc.baseKey.ChildString(c.Id)
+	k := sc.baseContactKey.ChildString(c.Id)
 
 	b, err := proto.Marshal(c)
 	if err != nil {
@@ -94,7 +96,7 @@ func (sc *scopedClient) SetLocalContact(ctx context.Context, c *pb.Contact) erro
 }
 
 func (sc *scopedClient) GetLocalContact(ctx context.Context, pub id.PublicID) (*pb.Contact, error) {
-	k := sc.baseKey.ChildString(string(pub))
+	k := sc.baseContactKey.ChildString(string(pub))
 
 	v, err := sc.privDS.Get(ctx, k)
 	if err != nil {
@@ -110,7 +112,7 @@ func (sc *scopedClient) GetLocalContact(ctx context.Context, pub id.PublicID) (*
 }
 
 func (sc *scopedClient) RemoveLocalContact(ctx context.Context, pub id.PublicID) error {
-	k := sc.baseKey.ChildString(string(pub))
+	k := sc.baseContactKey.ChildString(string(pub))
 
 	return sc.privDS.Delete(ctx, k)
 }

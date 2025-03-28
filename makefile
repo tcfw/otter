@@ -41,5 +41,5 @@ $(PROTOBUFS):
 .PHONY: $(JSPROTOBUFS)
 $(JSPROTOBUFS):
 	protoc --js_out=import_style=commonjs,binary:./ui/web/src/components/protos $(patsubst js_%,%,$@)
-	sed -i "s/var jspb = require('google-protobuf');/import jspb from 'google-protobuf';/g;" $(patsubst %.proto,./ui/web/src/components/protos/%_pb.js, $(patsubst js_./%,%,$@))
+	sed -i "s/var jspb = require('google-protobuf');/import jspb from 'google-protobuf';/g;/goog.object.extend(exports, proto./d" $(patsubst %.proto,./ui/web/src/components/protos/%_pb.js, $(patsubst js_./%,%,$@))
 	echo "let protos = global.proto; export { goog as default, protos };" >> $(patsubst %.proto,./ui/web/src/components/protos/%_pb.js, $(patsubst js_./%,%,$@))
