@@ -96,6 +96,23 @@ func (sc *scopedClient) SetProposedName(ctx context.Context, name string) error 
 func (sc *scopedClient) SetLocalContact(ctx context.Context, c *pb.Contact) error {
 	k := sc.baseContactKey.ChildString(c.Id)
 
+	if c.Id == "" || c.PrivateName == nil || c.PrivateName.FirstName == "" {
+		return errors.New("contact missing info")
+	}
+
+	existing, err := sc.GetLocalContact(ctx, id.PublicID(c.Id))
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+		return err
+	}
+
+	c.Added = timestamppb.Now()
+	if existing != nil {
+		c.Added = existing.Added
+		c.NumberOfContacts = existing.NumberOfContacts
+
+		c.LastUpdated = timestamppb.Now()
+	}
+
 	b, err := proto.Marshal(c)
 	if err != nil {
 		return err
@@ -196,7 +213,7 @@ func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID)
 				mu.Lock()
 				_, ok := visitedContacts[id]
 				mu.Unlock()
-				if ok {
+				if ok || id == sc.pub {
 					continue
 				}
 
