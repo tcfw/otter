@@ -43,6 +43,7 @@ func Register(o otter.Otter) {
 		sr := r.PathPrefix("/petnames/").Subrouter()
 
 		sr.HandleFunc("/search", pnh.apiHandle_SearchDHT).Methods(http.MethodGet)
+		sr.HandleFunc("/searchedge", pnh.apiHandle_SearchEdgeNames).Methods(http.MethodGet)
 
 		sr.HandleFunc("/proposedname", pnh.apiHandle_GetProposedName).Methods(http.MethodGet)
 		sr.HandleFunc("/setproposedname", pnh.apiHandle_SetProposedName).Methods(http.MethodPost)
