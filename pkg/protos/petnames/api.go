@@ -118,7 +118,7 @@ func (sc *scopedClient) RemoveLocalContact(ctx context.Context, pub id.PublicID)
 }
 
 func (sc *scopedClient) ListLocalContacts(ctx context.Context) ([]*pb.Contact, error) {
-	q, err := sc.privDS.Query(ctx, query.Query{Prefix: sc.baseKey.String()})
+	q, err := sc.privDS.Query(ctx, query.Query{Prefix: sc.baseContactKey.String()})
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (sc *scopedClient) ListLocalContacts(ctx context.Context) ([]*pb.Contact, e
 }
 
 func (sc *scopedClient) CountLocalContacts(ctx context.Context) (int, error) {
-	q, err := sc.privDS.Query(ctx, query.Query{Prefix: sc.baseKey.String(), KeysOnly: true})
+	q, err := sc.privDS.Query(ctx, query.Query{Prefix: sc.baseContactKey.String(), KeysOnly: true})
 	if err != nil {
 		return 0, err
 	}
