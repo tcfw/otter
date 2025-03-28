@@ -492,3 +492,41 @@ func (p *PetnamesHandler) apiHandle_SearchDHT(w http.ResponseWriter, r *http.Req
 		return
 	}
 }
+
+func (p *PetnamesHandler) apiHandle_SearchEdgeNames(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	auth, err := v1api.GetAuthIDFromContext(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	sc, err := p.ForPublicID(auth)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	pid, err := io.ReadAll(io.LimitReader(r.Body, 100))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resCh, err := sc.SearchForEdgeNames(ctx, id.PublicID(pid))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	res := []*pb.DOSName{}
+
+	for r := range resCh {
+		res = append(res, r)
+	}
+
+	w.Header().Add("content-type", "application/json")
+	json.NewEncoder(w).Encode(res)
+}
