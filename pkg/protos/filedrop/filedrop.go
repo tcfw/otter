@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unsafe"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -29,7 +30,8 @@ file content.
 const (
 	protoID protocol.ID = "/otter/filedrop/0.0.1"
 
-	reqMaxSize = 2048
+	reqMaxSize    = int(unsafe.Sizeof(TransferRequest{})) + 1000
+	streamTimeout = 5 * time.Second
 )
 
 var (
@@ -49,6 +51,21 @@ type FileDropHandler struct {
 }
 
 func (a *FileDropHandler) handle(s network.Stream) {
+	if err := s.Scope().SetService(string(protoID)); err != nil {
+		a.l.Debug("error attaching stream to service", zap.Error(err))
+		s.Reset()
+		return
+	}
+
+	if err := s.Scope().ReserveMemory(reqMaxSize, network.ReservationPriorityLow); err != nil {
+		a.l.Debug("error reserving memory for stream", zap.Error(err))
+		s.Reset()
+		return
+	}
+	defer s.Scope().ReleaseMemory(reqMaxSize)
+
+	s.SetReadDeadline(time.Now().Add(streamTimeout))
+
 	defer s.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

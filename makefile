@@ -8,7 +8,7 @@ PLUGINS=$(shell ls ./pkg/protos/)
 
 PROTOBUFS=$(shell find ./pkg -iname "*.proto") $(shell find ./internal -iname "*.proto")
 
-JSPROTOBUFS=js_./pkg/otter/pb/remote.proto
+JSPROTOBUFS=js_./pkg/otter/pb/remote.proto js_./pkg/protos/petnames/pb/petnames.proto
 
 .PHONY: run
 run:
@@ -41,5 +41,5 @@ $(PROTOBUFS):
 .PHONY: $(JSPROTOBUFS)
 $(JSPROTOBUFS):
 	protoc --js_out=import_style=commonjs,binary:./ui/web/src/components/protos $(patsubst js_%,%,$@)
-	sed -i "s/var jspb = require('google-protobuf');/import jspb from 'google-protobuf';/g;s/goog.object.extend(exports, proto.remote);/let protos = global.proto; export { goog as default, protos };/g" $(patsubst %.proto,./ui/web/src/components/protos/%_pb.js, $(patsubst js_./%,%,$@))
-	# @echo "export {goog as default, protoExport};" >> $(patsubst %.proto,./ui/web/src/components/protos/%_pb.js, $(patsubst js_./%,%,$@))
+	sed -i "s/var jspb = require('google-protobuf');/import jspb from 'google-protobuf';/g;" $(patsubst %.proto,./ui/web/src/components/protos/%_pb.js, $(patsubst js_./%,%,$@))
+	echo "let protos = global.proto; export { goog as default, protos };" >> $(patsubst %.proto,./ui/web/src/components/protos/%_pb.js, $(patsubst js_./%,%,$@))

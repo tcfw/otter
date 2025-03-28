@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package petnames;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/tcfw/otter/pkg/protos/petnames/pb";
+
+message Name {
+	string id = 1;
+	string title = 2;
+	string firstName = 3;
+	repeated string middleName = 4;
+	string lastName = 5;
+}
+
+message Contact {
+	string id = 1;
+	Name sharedName = 2;
+	Name privateName = 3;
+
+	google.protobuf.Timestamp added = 4;
+	google.protobuf.Timestamp lastUpdated = 5;
+
+	uint32 numberOfContacts = 6;
+}
+
+message DOSName {
+	Name name = 1;
+	uint32 degree = 2;
+}
+
+message SetProposedNameRequest {
+	string name = 1;
+}
+
+message SharedContact {
+	string id = 1;
+	Name sharedName = 2;
+}
+
+message LookupRequest {
+	repeated string id = 1;
+	double suggestedNodeProbability = 2;
+}
+
+enum ErrorCode {
+	SUCCESS = 0;
+	INTERNAL = 1;
+	OVER_MAX_PROBABILITY = 2;
+	OVER_MAX_IDS = 3;
+}
+
+message LookupResponse {
+	ErrorCode error = 1;
+	repeated SharedContact sharedNames = 2;
+	repeated string tryContactId = 3;
+	uint64 contactSize = 4;
+}

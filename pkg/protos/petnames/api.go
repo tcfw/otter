@@ -11,8 +11,11 @@ import (
 	"time"
 
 	"github.com/ipfs/go-datastore"
+	"github.com/ipfs/go-datastore/query"
 	"github.com/tcfw/otter/pkg/id"
+	"github.com/tcfw/otter/pkg/protos/petnames/pb"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 
 	v1api "github.com/tcfw/otter/pkg/api"
 )
@@ -58,7 +61,7 @@ func (sc *scopedClient) ProposedName() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	val, err := sc.pubDS.Get(ctx, sc.baseKey.Child(datastore.NewKey("proposed_name")))
+	val, err := sc.pubDS.Get(ctx, sc.baseKey.ChildString("proposed_name"))
 	if err != nil {
 		if errors.Is(err, datastore.ErrNotFound) {
 			return "", nil
@@ -70,11 +73,8 @@ func (sc *scopedClient) ProposedName() (string, error) {
 	return string(val), nil
 }
 
-func (sc *scopedClient) SetProposedName(name string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	err := sc.pubDS.Put(ctx, sc.baseKey.Child(datastore.NewKey("proposed_name")), []byte(name))
+func (sc *scopedClient) SetProposedName(ctx context.Context, name string) error {
+	err := sc.pubDS.Put(ctx, sc.baseKey.ChildString("proposed_name"), []byte(name))
 	if err != nil {
 		return err
 	}
@@ -82,28 +82,132 @@ func (sc *scopedClient) SetProposedName(name string) error {
 	return nil
 }
 
-func (sc *scopedClient) SetLocalContact(c *Contact) error {
-	return errors.New("not implemented")
+func (sc *scopedClient) SetLocalContact(ctx context.Context, c *pb.Contact) error {
+	k := sc.baseKey.ChildString(c.Id)
+
+	b, err := proto.Marshal(c)
+	if err != nil {
+		return err
+	}
+
+	return sc.privDS.Put(ctx, k, b)
 }
 
-func (sc *scopedClient) GetLocalContact(pub id.PublicID) (string, error) {
-	return "", errors.New("not implemented")
+func (sc *scopedClient) GetLocalContact(ctx context.Context, pub id.PublicID) (*pb.Contact, error) {
+	k := sc.baseKey.ChildString(string(pub))
+
+	v, err := sc.privDS.Get(ctx, k)
+	if err != nil {
+		return nil, err
+	}
+
+	c := &pb.Contact{}
+	if err := proto.Unmarshal(v, c); err != nil {
+		return nil, err
+	}
+
+	return c, nil
 }
 
-func (sc *scopedClient) RemoveLocalContact(pub id.PublicID) error {
-	return errors.New("not implemented")
+func (sc *scopedClient) RemoveLocalContact(ctx context.Context, pub id.PublicID) error {
+	k := sc.baseKey.ChildString(string(pub))
+
+	return sc.privDS.Delete(ctx, k)
 }
 
-func (sc *scopedClient) ListLocalContacts(ctx context.Context, pub id.PublicID) ([]Contact, error) {
+func (sc *scopedClient) ListLocalContacts(ctx context.Context) ([]*pb.Contact, error) {
+	q, err := sc.privDS.Query(ctx, query.Query{Prefix: sc.baseKey.String()})
+	if err != nil {
+		return nil, err
+	}
+
+	cs := []*pb.Contact{}
+
+	for v := range q.Next() {
+		c := &pb.Contact{}
+
+		if err := proto.Unmarshal(v.Value, c); err != nil {
+			return nil, err
+		}
+
+		cs = append(cs, c)
+	}
+
+	return cs, nil
+}
+
+func (sc *scopedClient) CountLocalContacts(ctx context.Context) (int, error) {
+	q, err := sc.privDS.Query(ctx, query.Query{Prefix: sc.baseKey.String(), KeysOnly: true})
+	if err != nil {
+		return 0, err
+	}
+
+	c := 0
+	for range q.Next() {
+		c++
+	}
+
+	return c, nil
+}
+
+func (sc *scopedClient) SearchLocalContacts(ctx context.Context, query string) ([]*pb.Contact, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (sc *scopedClient) SearchLocalContacts(ctx context.Context, query string) ([]Contact, error) {
+func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID) (<-chan *pb.DOSName, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID) (<-chan *SharedContact, error) {
-	return nil, errors.New("not implemented")
+func (p *PetnamesHandler) apiHandle_ListContact(w http.ResponseWriter, r *http.Request) {
+	auth, err := v1api.GetAuthIDFromContext(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	sc, err := p.ForPublicID(auth)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	c, err := sc.ListLocalContacts(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Add("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(c)
+}
+
+func (p *PetnamesHandler) apiHandle_SetContact(w http.ResponseWriter, r *http.Request) {
+	auth, err := v1api.GetAuthIDFromContext(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	sc, err := p.ForPublicID(auth)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	c := &pb.Contact{}
+	err = json.NewDecoder(r.Body).Decode(c)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = sc.SetLocalContact(r.Context(), c)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte("ok"))
 }
 
 func (p *PetnamesHandler) apiHandle_GetProposedName(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +233,7 @@ func (p *PetnamesHandler) apiHandle_GetProposedName(w http.ResponseWriter, r *ht
 }
 
 func (p *PetnamesHandler) apiHandle_SetProposedName(w http.ResponseWriter, r *http.Request) {
-	req := &SetProposedNameRequest{}
+	req := &pb.SetProposedNameRequest{}
 
 	err := json.NewDecoder(io.LimitReader(r.Body, maxBodySize)).Decode(req)
 	if err != nil {
@@ -154,7 +258,7 @@ func (p *PetnamesHandler) apiHandle_SetProposedName(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if err := sc.SetProposedName(req.Name); err != nil {
+	if err := sc.SetProposedName(r.Context(), req.Name); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

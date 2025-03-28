@@ -2,9 +2,9 @@ package petnames
 
 import (
 	"context"
-	"time"
 
 	"github.com/tcfw/otter/pkg/id"
+	"github.com/tcfw/otter/pkg/protos/petnames/pb"
 )
 
 const (
@@ -17,35 +17,15 @@ type ClientImpl interface {
 
 type ScopedClient interface {
 	ProposedName() (string, error)
-	SetProposedName(string) error
+	SetProposedName(context.Context, string) error
 
-	SetLocalContact(*Contact) error
-	GetLocalContact(id.PublicID) (string, error)
-	RemoveLocalContact(id.PublicID) error
+	SetLocalContact(context.Context, *pb.Contact) error
+	GetLocalContact(context.Context, id.PublicID) (*pb.Contact, error)
+	RemoveLocalContact(context.Context, id.PublicID) error
 
-	ListLocalContacts(context.Context, id.PublicID) ([]Contact, error)
-	SearchLocalContacts(context.Context, string) ([]Contact, error)
+	CountLocalContacts(context.Context) (int, error)
+	ListLocalContacts(context.Context) ([]*pb.Contact, error)
+	SearchLocalContacts(context.Context, string) ([]*pb.Contact, error)
 
-	SearchForEdgeNames(context.Context, id.PublicID) (<-chan *SharedContact, error)
-}
-
-type Contact struct {
-	ID id.PublicID
-
-	SharedName  string
-	PrivateName string
-
-	Added       time.Time
-	LastUpdated time.Time
-}
-
-type SharedContact struct {
-	Contact
-
-	SharedBy  id.PublicID
-	Signature []byte
-}
-
-type SetProposedNameRequest struct {
-	Name string `json:"name"`
+	SearchForEdgeNames(context.Context, id.PublicID) (<-chan *pb.DOSName, error)
 }
