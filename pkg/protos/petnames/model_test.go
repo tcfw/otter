@@ -172,5 +172,5 @@ func TestBarabasiAlbert(t *testing.T) {
 	if len(edgeNames) < 1 {
 		t.Fatal("did not find enough edge names")
 	}
-	assert.Equal(t, edgeNames[0].Name, edgeNames[1].Name)
+	assert.Equal(t, edgeNames[0], edgeNames[1])
 }

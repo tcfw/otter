@@ -80,16 +80,103 @@ func (o *Otter) setupAPI(ctx context.Context) error {
 	return nil
 }
 
+type responseStreamer struct {
+	w io.Writer
+	l *zap.Logger
+
+	wr *httptest.ResponseRecorder
+
+	streaming     bool
+	wroteHeader   bool
+	wroteResponse bool
+}
+
+func (rs *responseStreamer) Header() http.Header {
+	return rs.wr.Header()
+}
+
+func (rs *responseStreamer) Write(d []byte) (int, error) {
+	return rs.wr.Body.Write(d)
+}
+
+func (rs *responseStreamer) WriteHeader(statusCode int) {
+	if rs.wroteHeader {
+		return
+	}
+
+	rs.wroteHeader = true
+	rs.wr.WriteHeader(statusCode)
+
+	if rs.streaming {
+		err := rs.WriteRPCResponse()
+		if err != nil {
+			rs.l.Error("writing RPC response", zap.Bool("streaming", rs.streaming), zap.Error(err))
+		}
+	}
+}
+
+func (rs *responseStreamer) WriteRPCResponse() error {
+	if rs.wroteResponse {
+		return nil
+	}
+
+	rs.wroteResponse = true
+
+	resp := &pb.RemoteRPCResponse{
+		Headers:   make(map[string]string),
+		Code:      uint32(rs.wr.Code),
+		Streaming: rs.streaming,
+	}
+
+	for k, vv := range rs.Header() {
+		if len(vv) == 0 {
+			continue
+		}
+
+		resp.Headers[k] = vv[0]
+	}
+
+	if !rs.streaming {
+		resp.Body = rs.wr.Body.Bytes()
+	}
+
+	b, err := proto.Marshal(resp)
+	if err != nil {
+		return err
+	}
+
+	if rs.streaming {
+		b = append(b, '\n')
+	}
+
+	_, err = rs.w.Write(b)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (rs *responseStreamer) Flush() {
+	if !rs.wroteHeader {
+		rs.WriteHeader(200)
+	}
+
+	if rs.streaming {
+		rs.wr.Body.WriteTo(rs.w)
+	}
+}
+
 func (o *Otter) handleRemoteRPCStream(s network.Stream) {
+	defer s.Reset()
+
 	if err := s.Scope().SetService("rpc"); err != nil {
 		o.logger.Debug("error attaching stream to ident4 service", zap.Error(err))
-		s.Reset()
 		return
 	}
 
 	if err := s.Scope().ReserveMemory(maxReqSize, network.ReservationPriorityAlways); err != nil {
 		o.logger.Debug("error reserving memory for stream", zap.Error(err))
-		s.Reset()
 		return
 	}
 	defer s.Scope().ReleaseMemory(maxReqSize)
@@ -98,7 +185,6 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 
 	buf := make([]byte, 4)
 	if _, err := s.Read(buf); err != nil {
-		s.Reset()
 		return
 	}
 
@@ -106,14 +192,12 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 
 	reqSize := binary.LittleEndian.Uint32(buf)
 	if reqSize > maxReqSize {
-		s.Reset()
 		o.logger.Named("rpc").Info("closing req stream due to req size", zap.Any("req size", reqSize))
 		return
 	}
 
 	reqBuf := make([]byte, reqSize)
 	if _, err := s.Read(reqBuf); err != nil {
-		s.Reset()
 		o.logger.Named("rpc").Error("reading buf", zap.Error(err))
 		return
 	}
@@ -122,7 +206,6 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 
 	err := proto.Unmarshal(reqBuf, pReq)
 	if err != nil {
-		s.Reset()
 		o.logger.Named("rpc").Error("reading protobuf req", zap.Error(err))
 		return
 	}
@@ -137,13 +220,11 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 	u, err := url.Parse(pReq.Rpc)
 	if err != nil {
 		o.logger.Named("rpc").Error("parsing URL", zap.Error(err))
-		s.Reset()
 		return
 	}
 
 	if u.Path == "/api/keys/import" {
 		o.logger.Named("rpc").Warn("attempt to import key from remote")
-		s.Close()
 		return
 	}
 
@@ -158,41 +239,20 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 		ContentLength: int64(reqSize),
 	}
 
-	w := httptest.NewRecorder()
+	w := &responseStreamer{
+		w:         s,
+		l:         o.logger.Named("rpc"),
+		wr:        httptest.NewRecorder(),
+		streaming: pReq.StreamResponse,
+	}
 
 	o.apiRouter.ServeHTTP(w, r)
 
-	resp := &pb.RemoteRPCResponse{
-		Headers: make(map[string]string),
-	}
-
-	resp.Code = uint32(w.Code)
-	resp.Body = w.Body.Bytes()
-
-	for k, vv := range w.Header() {
-		if len(vv) == 0 {
-			continue
-		}
-
-		resp.Headers[k] = vv[0]
-	}
-
-	b, err := proto.Marshal(resp)
+	err = w.WriteRPCResponse()
 	if err != nil {
-		s.Reset()
-		o.logger.Named("rpc").Error("marshaling rpc response", zap.Error(err))
+		w.l.Error("writing response", zap.Error(err))
 		return
 	}
-
-	o.logger.Named("rpc").Info("sending response", zap.Any("resp", resp))
-
-	_, err = s.Write(b)
-	if err != nil {
-		s.Reset()
-		o.logger.Named("rpc").Error("sending rpc response", zap.Error(err))
-		return
-	}
-	s.Close()
 }
 
 func (o *Otter) initAPIRouter() (*mux.Router, error) {

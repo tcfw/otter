@@ -507,10 +507,10 @@ func (p *PetnamesHandler) apiHandle_SearchDHT(w http.ResponseWriter, r *http.Req
 }
 
 func (p *PetnamesHandler) apiHandle_SearchEdgeNames(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 	defer cancel()
 
-	auth, err := v1api.GetAuthIDFromContext(r.Context())
+	auth, err := v1api.GetAuthIDFromContext(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -534,12 +534,26 @@ func (p *PetnamesHandler) apiHandle_SearchEdgeNames(w http.ResponseWriter, r *ht
 		return
 	}
 
+	stream := r.URL.Query().Has("stream")
+	w.Header().Add("content-type", "application/json")
+
 	res := []*pb.DOSName{}
 
+	enc := json.NewEncoder(w)
+
 	for r := range resCh {
-		res = append(res, r)
+		if stream {
+			enc.Encode(r)
+
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		} else {
+			res = append(res, r)
+		}
 	}
 
-	w.Header().Add("content-type", "application/json")
-	json.NewEncoder(w).Encode(res)
+	if !stream {
+		json.NewEncoder(w).Encode(res)
+	}
 }

@@ -9,10 +9,12 @@ message RemoteRPCRequest {
 	string rpc = 2;
 	map<string,string> headers = 3;
 	bytes body = 4;
+	bool streamResponse = 5;
 }
 
 message RemoteRPCResponse {
 	uint32 code = 1;
 	map<string,string> headers = 2;
+	bool streaming = 4;
 	bytes body = 3;
 }
