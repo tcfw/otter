@@ -170,17 +170,17 @@ func (rs *responseStreamer) Flush() {
 }
 
 func (o *Otter) handleRemoteRPCStream(s network.Stream) {
-	defer s.Reset()
-
 	l := o.logger.Named("rpc")
 
 	if err := s.Scope().SetService("rpc"); err != nil {
 		l.Debug("error attaching stream to ident4 service", zap.Error(err))
+		s.Reset()
 		return
 	}
 
 	if err := s.Scope().ReserveMemory(maxReqSize, network.ReservationPriorityAlways); err != nil {
 		l.Debug("error reserving memory for stream", zap.Error(err))
+		s.Reset()
 		return
 	}
 	defer s.Scope().ReleaseMemory(maxReqSize)
@@ -189,6 +189,7 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 
 	buf := make([]byte, 4)
 	if _, err := s.Read(buf); err != nil {
+		s.Reset()
 		return
 	}
 
@@ -197,12 +198,14 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 	reqSize := binary.LittleEndian.Uint32(buf)
 	if reqSize > maxReqSize {
 		l.Info("closing req stream due to req size", zap.Any("req size", reqSize))
+		s.Reset()
 		return
 	}
 
 	reqBuf := make([]byte, reqSize)
 	if _, err := s.Read(reqBuf); err != nil {
 		l.Error("reading buf", zap.Error(err))
+		s.Reset()
 		return
 	}
 
@@ -211,6 +214,7 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 	err := proto.Unmarshal(reqBuf, pReq)
 	if err != nil {
 		l.Error("reading protobuf req", zap.Error(err))
+		s.Reset()
 		return
 	}
 
@@ -224,11 +228,13 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 	u, err := url.Parse(pReq.Rpc)
 	if err != nil {
 		l.Error("parsing URL", zap.Error(err))
+		s.Reset()
 		return
 	}
 
 	if u.Path == "/api/keys/import" {
 		l.Warn("attempt to import key from remote")
+		s.Reset()
 		return
 	}
 
@@ -257,6 +263,7 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 		w.l.Error("writing response", zap.Error(err))
 		return
 	}
+	s.Close()
 }
 
 func (o *Otter) initAPIRouter() (*mux.Router, error) {
