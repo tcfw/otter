@@ -1,0 +1,10 @@
+with-expecter: True
+# keeptree: False
+dir: "./internal/mocks/"
+outpkg: mocks
+packages:
+  github.com/tcfw/otter/pkg/otter:
+    interfaces:
+      Otter:
+      StorageClasses:
+      Protocols:

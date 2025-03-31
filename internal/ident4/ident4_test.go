@@ -29,13 +29,13 @@ func TestHandshake(t *testing.T) {
 	ks1 := mocks.NewCryptography(nil)
 	ks2 := mocks.NewCryptography(nil)
 
-	if err := Setup(h1, logger, ks1); err != nil {
+	if _, err := Setup(h1, logger, ks1); err != nil {
 		t.Fatal(err)
 	}
 
 	i4h1 := defaultClient
 
-	if err := Setup(h2, logger, ks2); err != nil {
+	if _, err := Setup(h2, logger, ks2); err != nil {
 		t.Fatal(err)
 	}
 

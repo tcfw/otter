@@ -32,14 +32,14 @@ type Ident4 struct {
 	l *zap.Logger
 }
 
-func Setup(h host.Host, l *zap.Logger, c otter.Cryptography) error {
+func Setup(h host.Host, l *zap.Logger, c otter.Cryptography) (*Ident4, error) {
 	i4 := &Ident4{h, c, l}
 
 	h.SetStreamHandler(protoID, i4.handleStream)
 
 	defaultClient = i4
 
-	return nil
+	return i4, nil
 }
 
 func (s *state) readMsg(stream network.Stream) (*pb.Message, error) {

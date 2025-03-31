@@ -61,13 +61,6 @@ type Otter interface {
 	// Settings()
 }
 
-type Storage interface {
-	Get(ctx context.Context, k string) ([]byte, error)
-	Put(ctx context.Context, k string, v []byte) error
-	// Search(ctx context.Context, prefix string) (<-chan []byte, error)
-	Delete(ctx context.Context, k string) error
-}
-
 type StorageClasses interface {
 	Public(pub id.PublicID) (datastore.Batching, error)
 	Private(pk id.PrivateKey) (datastore.Batching, error)
@@ -78,6 +71,12 @@ type StorageClasses interface {
 type Protocols interface {
 	//libp2p host
 	P2P() host.Host
+
+	//Ident4 Dial
+	Dial(peer peer.ID, proto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error)
+
+	//Ident4 Dial with Context
+	DialContext(ctx context.Context, peer peer.ID, proto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error)
 
 	//List of registered protocols
 	Registered() []protocol.ID

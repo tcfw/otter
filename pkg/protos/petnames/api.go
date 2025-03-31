@@ -15,7 +15,6 @@ import (
 	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/query"
 	"github.com/libp2p/go-msgio/pbio"
-	"github.com/tcfw/otter/internal/ident4"
 	"github.com/tcfw/otter/internal/utils"
 	"github.com/tcfw/otter/pkg/id"
 	"github.com/tcfw/otter/pkg/otter"
@@ -28,7 +27,8 @@ import (
 )
 
 const (
-	maxBodySize = 10 * 1024
+	workersPerLookup = 5
+	maxBodySize      = 10 * 1024
 )
 
 func Client() ClientImpl {
@@ -41,7 +41,7 @@ func (p *PetnamesHandler) ForPublicID(pub id.PublicID) (ScopedClient, error) {
 		return nil, err
 	}
 
-	privds, err := p.o.Storage().Public(pub)
+	privds, err := p.o.Storage().PrivateFromPublic(pub)
 	if err != nil {
 		return nil, err
 	}
@@ -203,8 +203,19 @@ func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID)
 
 	probeProb := maxRequestProbability
 
-	for range 10 {
+	var wg sync.WaitGroup
+	wg.Add(workersPerLookup)
+
+	go func() {
+		wg.Wait()
+		close(tryCh)
+		close(res)
+	}()
+
+	for range workersPerLookup {
 		go func() {
+			defer wg.Done()
+
 			for id := range idCh {
 				if id == "" {
 					return
@@ -235,6 +246,8 @@ func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID)
 
 				if len(tc) != 0 {
 					select {
+					case <-ctx.Done():
+						return
 					case tryCh <- tc:
 					default:
 					}
@@ -262,8 +275,6 @@ func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID)
 
 	go func() {
 		defer close(idCh)
-		defer close(tryCh)
-		defer close(res)
 
 		for _, c := range cl {
 			select {
@@ -275,7 +286,7 @@ func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID)
 
 		//After initial probing, lower the number of ordered random
 		// sampling from lookup requests
-		probeProb = maxRequestProbability / 2
+		probeProb = maxRequestProbability * 0.7
 
 		for {
 			select {
@@ -306,7 +317,7 @@ func (sc *scopedClient) askIDForEdgeNames(ctx context.Context, pub id.PublicID, 
 		return nil, nil, 0, err
 	}
 
-	s, err := ident4.DialContext(ctx, peer, protoID, pub, sc.pub)
+	s, err := sc.o.Protocols().DialContext(ctx, peer, protoID, pub, sc.pub)
 	if err != nil {
 		return nil, nil, 0, err
 	}

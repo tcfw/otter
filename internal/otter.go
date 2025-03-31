@@ -20,6 +20,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/tcfw/otter/internal/ident4"
@@ -40,6 +41,7 @@ type Otter struct {
 	pubsub *pubsub.PubSub
 
 	ipld ipld.DAGService
+	i4   *ident4.Ident4
 	mdns mdns.Service
 	rm   network.ResourceManager
 	ping *ping.PingService
@@ -105,9 +107,11 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 	}
 	o.ipld = ipfs
 
-	if err := ident4.Setup(o.p2p, o.logger.Named("ident4"), o.Crypto()); err != nil {
+	i4, err := ident4.Setup(o.p2p, o.logger.Named("ident4"), o.Crypto())
+	if err != nil {
 		return nil, err
 	}
+	o.i4 = i4
 
 	go o.watchPeers()
 	go o.publishIPNS(ctx)
@@ -134,6 +138,14 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 	go o.ensureSubsystems()
 
 	return o, nil
+}
+
+func (o *Otter) Dial(peer peer.ID, proto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error) {
+	return o.i4.Dial(peer, proto, remote, local)
+}
+
+func (o *Otter) DialContext(ctx context.Context, peer peer.ID, proto protocol.ID, remote id.PublicID, local id.PublicID) (network.Stream, error) {
+	return o.i4.DialContext(ctx, peer, proto, remote, local)
 }
 
 func (o *Otter) watchPeers() {
