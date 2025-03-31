@@ -154,6 +154,8 @@ func (rs *responseStreamer) WriteRPCResponse() error {
 		return err
 	}
 
+	rs.l.Debug("sent response")
+
 	return nil
 }
 
@@ -170,13 +172,15 @@ func (rs *responseStreamer) Flush() {
 func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 	defer s.Reset()
 
+	l := o.logger.Named("rpc")
+
 	if err := s.Scope().SetService("rpc"); err != nil {
-		o.logger.Debug("error attaching stream to ident4 service", zap.Error(err))
+		l.Debug("error attaching stream to ident4 service", zap.Error(err))
 		return
 	}
 
 	if err := s.Scope().ReserveMemory(maxReqSize, network.ReservationPriorityAlways); err != nil {
-		o.logger.Debug("error reserving memory for stream", zap.Error(err))
+		l.Debug("error reserving memory for stream", zap.Error(err))
 		return
 	}
 	defer s.Scope().ReleaseMemory(maxReqSize)
@@ -188,17 +192,17 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 		return
 	}
 
-	o.logger.Named("rpc").Info("new stream open and reading body", zap.Any("size", len(buf)))
+	l.Info("new stream open and reading body", zap.Any("size", len(buf)))
 
 	reqSize := binary.LittleEndian.Uint32(buf)
 	if reqSize > maxReqSize {
-		o.logger.Named("rpc").Info("closing req stream due to req size", zap.Any("req size", reqSize))
+		l.Info("closing req stream due to req size", zap.Any("req size", reqSize))
 		return
 	}
 
 	reqBuf := make([]byte, reqSize)
 	if _, err := s.Read(reqBuf); err != nil {
-		o.logger.Named("rpc").Error("reading buf", zap.Error(err))
+		l.Error("reading buf", zap.Error(err))
 		return
 	}
 
@@ -206,11 +210,11 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 
 	err := proto.Unmarshal(reqBuf, pReq)
 	if err != nil {
-		o.logger.Named("rpc").Error("reading protobuf req", zap.Error(err))
+		l.Error("reading protobuf req", zap.Error(err))
 		return
 	}
 
-	o.logger.Named("rpc").Info("got req", zap.Any("req", pReq))
+	l.Info("got req", zap.Any("req", pReq))
 
 	reqHeaders := http.Header{}
 	for k, v := range pReq.Headers {
@@ -219,12 +223,12 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 
 	u, err := url.Parse(pReq.Rpc)
 	if err != nil {
-		o.logger.Named("rpc").Error("parsing URL", zap.Error(err))
+		l.Error("parsing URL", zap.Error(err))
 		return
 	}
 
 	if u.Path == "/api/keys/import" {
-		o.logger.Named("rpc").Warn("attempt to import key from remote")
+		l.Warn("attempt to import key from remote")
 		return
 	}
 
@@ -241,7 +245,7 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 
 	w := &responseStreamer{
 		w:         s,
-		l:         o.logger.Named("rpc"),
+		l:         l,
 		wr:        httptest.NewRecorder(),
 		streaming: pReq.StreamResponse,
 	}
