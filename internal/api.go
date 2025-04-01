@@ -136,7 +136,7 @@ func (rs *responseStreamer) WriteRPCResponse() error {
 		resp.Headers[k] = vv[0]
 	}
 
-	if !rs.streaming {
+	if !rs.streaming || resp.Code >= 500 {
 		resp.Body = rs.wr.Body.Bytes()
 	}
 

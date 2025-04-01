@@ -24,7 +24,7 @@ type ScopedClient interface {
 	RemoveLocalContact(context.Context, id.PublicID) error
 
 	CountLocalContacts(context.Context) (int, error)
-	ListLocalContacts(context.Context) ([]*pb.Contact, error)
+	ListLocalContacts(context.Context, int, int) ([]*pb.Contact, error)
 	SearchLocalContacts(context.Context, string) ([]*pb.Contact, error)
 
 	SearchForEdgeNames(context.Context, id.PublicID) (<-chan *pb.DOSName, error)

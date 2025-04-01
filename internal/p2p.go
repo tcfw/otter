@@ -335,6 +335,9 @@ func (o *Otter) ResolveOtterNodesForKey(ctx context.Context, pubk id.PublicID) (
 	}
 
 	res := <-resCh
+	if res == nil {
+		return nil, errors.New("no results for publicID")
+	}
 
 	rec, err := ipns.UnmarshalRecord(res)
 	if err != nil {

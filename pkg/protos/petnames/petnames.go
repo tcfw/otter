@@ -49,6 +49,7 @@ func Register(o otter.Otter) {
 		sr.HandleFunc("/setproposedname", pnh.apiHandle_SetProposedName).Methods(http.MethodPost)
 
 		sr.HandleFunc("/set", pnh.apiHandle_SetContact).Methods(http.MethodPost)
+		sr.HandleFunc("/delete", pnh.apiHandle_DeleteContact).Methods(http.MethodPost)
 		sr.HandleFunc("/list", pnh.apiHandle_ListContact).Methods(http.MethodGet)
 	})
 

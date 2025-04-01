@@ -143,8 +143,12 @@ func (sc *scopedClient) RemoveLocalContact(ctx context.Context, pub id.PublicID)
 	return sc.privDS.Delete(ctx, k)
 }
 
-func (sc *scopedClient) ListLocalContacts(ctx context.Context) ([]*pb.Contact, error) {
-	q, err := sc.privDS.Query(ctx, query.Query{Prefix: sc.baseContactKey.String()})
+func (sc *scopedClient) ListLocalContacts(ctx context.Context, limit, offset int) ([]*pb.Contact, error) {
+	q, err := sc.privDS.Query(ctx, query.Query{
+		Prefix: sc.baseContactKey.String(),
+		Limit:  limit,
+		Offset: offset,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +187,7 @@ func (sc *scopedClient) SearchLocalContacts(ctx context.Context, query string) (
 }
 
 func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID) (<-chan *pb.DOSName, error) {
-	cl, err := sc.ListLocalContacts(ctx)
+	cl, err := sc.ListLocalContacts(ctx, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +374,9 @@ func (sc *scopedClient) updateKnownContactCount(ctx context.Context, contact id.
 }
 
 func (p *PetnamesHandler) apiHandle_ListContact(w http.ResponseWriter, r *http.Request) {
-	auth, err := v1api.GetAuthIDFromContext(r.Context())
+	ctx := r.Context()
+
+	auth, err := v1api.GetAuthIDFromContext(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -382,7 +388,33 @@ func (p *PetnamesHandler) apiHandle_ListContact(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	c, err := sc.ListLocalContacts(r.Context())
+	var limit, offset = 0, 0
+
+	queryLimit := r.URL.Query().Get("limit")
+	queryOffset := r.URL.Query().Get("offset")
+
+	limit, err = strconv.Atoi(queryLimit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	offset, err = strconv.Atoi(queryOffset)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if limit > 200 || limit < 0 {
+		http.Error(w, fmt.Sprintf("%d is over limit 200", limit), http.StatusBadRequest)
+		return
+	}
+
+	if offset < 0 {
+		http.Error(w, fmt.Sprintf("%d negative", offset), http.StatusBadRequest)
+		return
+	}
+
+	c, err := sc.ListLocalContacts(ctx, limit, offset)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -390,6 +422,37 @@ func (p *PetnamesHandler) apiHandle_ListContact(w http.ResponseWriter, r *http.R
 
 	w.Header().Add("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(c)
+}
+
+func (p *PetnamesHandler) apiHandle_DeleteContact(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	auth, err := v1api.GetAuthIDFromContext(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	sc, err := p.ForPublicID(auth)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	c := &pb.Contact{}
+	err = json.NewDecoder(r.Body).Decode(c)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err = sc.RemoveLocalContact(ctx, id.PublicID(c.Id))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte("ok"))
 }
 
 func (p *PetnamesHandler) apiHandle_SetContact(w http.ResponseWriter, r *http.Request) {
@@ -408,7 +471,7 @@ func (p *PetnamesHandler) apiHandle_SetContact(w http.ResponseWriter, r *http.Re
 	c := &pb.Contact{}
 	err = json.NewDecoder(r.Body).Decode(c)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -448,7 +511,7 @@ func (p *PetnamesHandler) apiHandle_SetProposedName(w http.ResponseWriter, r *ht
 
 	err := json.NewDecoder(io.LimitReader(r.Body, maxBodySize)).Decode(req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
