@@ -263,6 +263,7 @@ func (o *Otter) handleRemoteRPCStream(s network.Stream) {
 		w.l.Error("writing response", zap.Error(err))
 		return
 	}
+	w.Flush()
 	s.Close()
 }
 
