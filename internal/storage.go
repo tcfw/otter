@@ -85,15 +85,21 @@ func NewDiskDatastoreStorage(o *Otter) (datastore.Batching, error) {
 }
 
 func (o *Otter) GCStorage() {
+	o.doGCStorage(o.ctx)
+
 	for range time.NewTicker(5 * time.Minute).C {
 		o.doGCStorage(o.ctx)
 	}
 }
 
 func (o *Otter) doGCStorage(ctx context.Context) {
+	l := o.logger.Named("gc")
+	l.Debug("starting")
+	defer l.Debug("finished")
+
 	r := kuboGC.GC(ctx, o.blocks, o.ds, o.pinner, nil)
 	for gced := range r {
-		o.logger.Named("gc").Debug("GC removed block", zap.String("cid", gced.KeyRemoved.String()))
+		l.Debug("removed block", zap.String("cid", gced.KeyRemoved.String()))
 	}
 }
 
@@ -808,7 +814,7 @@ func (ds *distributedStorage) doRemove(c cid.Cid) error {
 		return nil
 	}
 
-	if err := ds.pinner.Unpin(ds.ctx, c, true); err != nil {
+	if err := ds.pinner.Unpin(ds.ctx, c, true); err != nil && !errors.Is(err, pinner.ErrNotPinned) {
 		return err
 	}
 

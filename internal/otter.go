@@ -149,6 +149,7 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 
 	go o.publishMetrics()
 	go o.ensureSubsystems()
+	go o.GCStorage()
 
 	return o, nil
 }
