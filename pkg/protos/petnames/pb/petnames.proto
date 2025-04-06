@@ -10,8 +10,9 @@ message Name {
 	string id = 1;
 	string title = 2;
 	string firstName = 3;
-	repeated string middleName = 4;
+	repeated string middleNames = 4;
 	string lastName = 5;
+	map<string,string> otherKV = 6;
 }
 
 message Contact {

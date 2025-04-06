@@ -11,6 +11,8 @@ import (
 	"github.com/gorilla/mux"
 	ipfslite "github.com/hsanjuan/ipfs-lite"
 	"github.com/ipfs/boxo/blockstore"
+	pinner "github.com/ipfs/boxo/pinning/pinner"
+	"github.com/ipfs/boxo/pinning/pinner/dspinner"
 	"github.com/ipfs/go-datastore"
 	ipld "github.com/ipfs/go-ipld-format"
 	p2pforge "github.com/ipshipyard/p2p-forge/client"
@@ -39,12 +41,13 @@ type Otter struct {
 	dht *dualdht.DHT
 
 	pubsub *pubsub.PubSub
-
-	ipld ipld.DAGService
-	i4   *ident4.Ident4
-	mdns mdns.Service
-	rm   network.ResourceManager
-	ping *ping.PingService
+	blocks blockstore.GCBlockstore
+	ipld   ipld.DAGService
+	pinner pinner.Pinner
+	i4     *ident4.Ident4
+	mdns   mdns.Service
+	rm     network.ResourceManager
+	ping   *ping.PingService
 
 	ui *uiConnector
 	ds datastore.Batching
@@ -99,13 +102,23 @@ func NewOtter(ctx context.Context, logger *zap.Logger) (*Otter, error) {
 		o.logger.Error("setting up mDNS discovery service: %w", zap.Error(err))
 	}
 
-	blocks := blockstore.NewGCBlockstore(blockstore.NewBlockstore(ds), blockstore.NewGCLocker())
+	o.blocks = blockstore.NewGCBlockstore(blockstore.NewBlockstore(ds), blockstore.NewGCLocker())
 
-	ipfs, err := ipfslite.New(ctx, ds, blocks, o.p2p, o.dht, nil)
+	ipfs, err := ipfslite.New(ctx, ds, o.blocks, o.p2p, o.dht, nil)
 	if err != nil {
 		return nil, fmt.Errorf("initing ipfs-lite: %w", err)
 	}
 	o.ipld = ipfs
+
+	pinDS, err := otter.NewNamespacedStorage(ds, datastore.NewKey("pins"), o.logger.Named("pins"))
+	if err != nil {
+		return nil, err
+	}
+
+	o.pinner, err = dspinner.New(ctx, pinDS, o.ipld)
+	if err != nil {
+		return nil, err
+	}
 
 	i4, err := ident4.Setup(o.p2p, o.logger.Named("ident4"), o.Crypto())
 	if err != nil {
@@ -210,22 +223,27 @@ func (o *Otter) HostID() peer.ID {
 
 func (o *Otter) Stop() error {
 	o.autotlsCM.Stop()
+	o.logger.Debug("stopped AutoTLS")
 
 	if err := o.mdns.Close(); err != nil {
 		o.logger.Error("stopping mdns discovery service", zap.Error(err))
 	}
+	o.logger.Debug("stopped mDNS")
 
 	if err := o.stopP2P(); err != nil {
 		o.logger.Error("stopping p2p", zap.Error(err))
 	}
+	o.logger.Debug("stopped libp2p")
 
 	if err := o.ds.Close(); err != nil {
 		o.logger.Error("closing main datastore", zap.Error(err))
 	}
+	o.logger.Debug("stopped datastore")
 
 	if err := o.rm.Close(); err != nil {
 		o.logger.Error("closing resource manager", zap.Error(err))
 	}
+	o.logger.Debug("stopped resource manager")
 
 	return nil
 }

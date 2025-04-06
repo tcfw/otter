@@ -4,7 +4,6 @@ import (
 	"context"
 	"math/rand"
 	"net/http"
-	"slices"
 	"sync"
 	"time"
 
@@ -172,16 +171,16 @@ func (p *PetnamesHandler) handle(s network.Stream) {
 }
 
 func probabalisticListContactsToTry(ctx context.Context, book ScopedClient, prob float64, max int) ([]string, error) {
-	bl, err := book.ListLocalContacts(ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	cch, err := book.ListAllLocalContactsBy(ctx, sortByNumContactsDesc)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
-	slices.SortFunc(bl, sortByNumContacts)
-
 	contacts := []string{}
 
-	for _, c := range slices.Backward(bl) {
+	for c := range cch {
 		if rand.Float64() >= prob {
 			continue
 		}
@@ -189,20 +188,15 @@ func probabalisticListContactsToTry(ctx context.Context, book ScopedClient, prob
 		contacts = append(contacts, c.Id)
 
 		if len(contacts) >= max {
+			cancel()
 			break
 		}
-	}
-
-	//probability wasn't on the requesters side here and we so far have suggested no
-	//new contacts to try, just add at least 1
-	if len(contacts) == 0 && len(bl) != 0 {
-		contacts = append(contacts, bl[0].Id)
 	}
 
 	return contacts, nil
 }
 
-func sortByNumContacts(a *pb.Contact, b *pb.Contact) int {
+func sortByNumContacts(a, b *pb.Contact) int {
 	switch true {
 	case a.NumberOfContacts > b.NumberOfContacts:
 		return 1
@@ -211,6 +205,10 @@ func sortByNumContacts(a *pb.Contact, b *pb.Contact) int {
 	default:
 		return 0
 	}
+}
+
+func sortByNumContactsDesc(a, b *pb.Contact) int {
+	return -sortByNumContacts(a, b)
 }
 
 func sendError(s network.Stream, errCode pb.ErrorCode) error {

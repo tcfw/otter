@@ -7,7 +7,6 @@ import (
 
 	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/query"
-	"github.com/jbenet/goprocess"
 	"go.uber.org/zap"
 )
 
@@ -188,6 +187,8 @@ func (nsb *NamespacedBatch) Commit(ctx context.Context) error {
 	return nsb.batch.Commit(ctx)
 }
 
+var _ query.Results = (*NamespacedQueryResults)(nil)
+
 type NamespacedQueryResults struct {
 	ctx context.Context
 	nss *NamespacedStorage
@@ -197,6 +198,10 @@ type NamespacedQueryResults struct {
 
 func (nsr *NamespacedQueryResults) Query() query.Query {
 	return nsr.q
+}
+
+func (nsr *NamespacedQueryResults) Done() <-chan struct{} {
+	return nsr.r.Done()
 }
 
 func (nsr *NamespacedQueryResults) Next() <-chan query.Result {
@@ -261,8 +266,4 @@ func (nsr *NamespacedQueryResults) Rest() ([]query.Entry, error) {
 
 func (nsr *NamespacedQueryResults) Close() error {
 	return nsr.r.Close()
-}
-
-func (nsr *NamespacedQueryResults) Process() goprocess.Process {
-	return nsr.r.Process()
 }

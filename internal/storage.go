@@ -18,11 +18,13 @@ import (
 	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/boxo/ipld/unixfs/importer/balanced"
 	"github.com/ipfs/boxo/ipld/unixfs/importer/helpers"
+	pinner "github.com/ipfs/boxo/pinning/pinner"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/query"
 	dsBadger3 "github.com/ipfs/go-ds-badger3"
 	ipld "github.com/ipfs/go-ipld-format"
+	kuboGC "github.com/ipfs/kubo/gc"
 	"github.com/libp2p/go-libp2p/core/peer"
 	multihash "github.com/multiformats/go-multihash/core"
 	"github.com/tcfw/otter/internal/storage"
@@ -80,6 +82,19 @@ func NewDiskDatastoreStorage(o *Otter) (datastore.Batching, error) {
 	}
 
 	return ds, nil
+}
+
+func (o *Otter) GCStorage() {
+	for range time.NewTicker(5 * time.Minute).C {
+		o.doGCStorage(o.ctx)
+	}
+}
+
+func (o *Otter) doGCStorage(ctx context.Context) {
+	r := kuboGC.GC(ctx, o.blocks, o.ds, o.pinner, nil)
+	for gced := range r {
+		o.logger.Named("gc").Debug("GC removed block", zap.String("cid", gced.KeyRemoved.String()))
+	}
 }
 
 func (o *Otter) apiHandle_Storage_ListKeys(w http.ResponseWriter, r *http.Request) {
@@ -435,6 +450,7 @@ func (o *Otter) GetOrNewDistributedStorageForKey(ctx context.Context, pub id.Pub
 		nodeId:        o.HostID().String(),
 		logger:        logger,
 		pinManagement: pinDS,
+		pinner:        o.pinner,
 
 		ipfs:     o.ipld.(*ipfslite.Peer),
 		jobQueue: distStorageGlobalJobQueue,
@@ -487,10 +503,13 @@ type distributedStorage struct {
 	nodeId   string
 	logger   *zap.Logger
 
-	pubID         id.PublicID
+	pubID id.PublicID
+
 	pinManagement datastore.Batching
-	ipfs          *ipfslite.Peer
-	metrics       *Collector
+	pinner        pinner.Pinner
+
+	ipfs    *ipfslite.Peer
+	metrics *Collector
 
 	checkMu sync.Mutex
 
@@ -735,42 +754,38 @@ func (ds *distributedStorage) doAdd(c cid.Cid) error {
 		return err
 	}
 
-	if err := ds.ipfs.Add(ds.ctx, node); err != nil {
+	if err := ds.pinner.Pin(ds.ctx, node, true, ""); err != nil {
 		return err
 	}
 
-	nav := ipld.NewWalker(ds.ctx, ipld.NewNavigableIPLDNode(node, ds.ipfs))
-	err = nav.Iterate(func(node ipld.NavigableNode) error {
-		inode := node.GetIPLDNode()
+	// nav := ipld.NewWalker(ds.ctx, ipld.NewNavigableIPLDNode(node, ds.ipfs))
+	// err = nav.Iterate(func(node ipld.NavigableNode) error {
+	// 	inode := node.GetIPLDNode()
 
-		if inode.Cid() == c {
-			return nil
-		}
+	// 	if inode.Cid() == c {
+	// 		return nil
+	// 	}
 
-		ds.logger.Debug("adding indirect CID to local blocks", zap.Any("cid", inode.Cid().String()))
+	// 	ds.logger.Debug("adding indirect CID to local blocks", zap.Any("cid", inode.Cid().String()))
 
-		if err := ds.ipfs.Add(ds.ctx, inode); err != nil {
-			return err
-		}
+	// 	k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, inode.Cid().String()})
 
-		k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, inode.Cid().String()})
+	// 	info := &pb.PinState{
+	// 		Indirect: true,
+	// 		Pinned:   true,
+	// 		Parent:   c.String(),
+	// 	}
 
-		info := &pb.PinState{
-			Indirect: true,
-			Pinned:   true,
-			Parent:   c.String(),
-		}
+	// 	vb, err := protobuf.Marshal(info)
+	// 	if err != nil {
+	// 		return err
+	// 	}
 
-		vb, err := protobuf.Marshal(info)
-		if err != nil {
-			return err
-		}
-
-		return ds.pinManagement.Put(ds.ctx, k, vb)
-	})
-	if err != nil && !errors.Is(err, ipld.EndOfDag) {
-		return err
-	}
+	// 	return ds.pinManagement.Put(ds.ctx, k, vb)
+	// })
+	// if err != nil && !errors.Is(err, ipld.EndOfDag) {
+	// 	return err
+	// }
 
 	info := &pb.PinState{
 		Pinned: true,
@@ -793,34 +808,38 @@ func (ds *distributedStorage) doRemove(c cid.Cid) error {
 		return nil
 	}
 
+	if err := ds.pinner.Unpin(ds.ctx, c, true); err != nil {
+		return err
+	}
+
 	k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, c.String()})
-
-	node, err := ds.ipfs.DAGService.Get(ds.ctx, c)
-	if err != nil {
-		return err
-	}
-
-	err = ds.ipfs.BlockStore().DeleteBlock(ds.ctx, c)
-	if err != nil {
-		return err
-	}
 
 	if err := ds.pinManagement.Delete(ds.ctx, k); err != nil {
 		return err
 	}
 
-	nav := ipld.NewWalker(ds.ctx, ipld.NewNavigableIPLDNode(node, ds.ipfs))
-	nav.Iterate(func(node ipld.NavigableNode) error {
-		inode := node.GetIPLDNode()
+	// node, err := ds.ipfs.DAGService.Get(ds.ctx, c)
+	// if err != nil {
+	// 	return err
+	// }
 
-		if err := ds.ipfs.BlockStore().DeleteBlock(ds.ctx, c); err != nil {
-			return err
-		}
+	// err = ds.ipfs.BlockStore().DeleteBlock(ds.ctx, c)
+	// if err != nil {
+	// 	return err
+	// }
 
-		k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, inode.Cid().String()})
+	// nav := ipld.NewWalker(ds.ctx, ipld.NewNavigableIPLDNode(node, ds.ipfs))
+	// nav.Iterate(func(node ipld.NavigableNode) error {
+	// 	inode := node.GetIPLDNode()
 
-		return ds.pinManagement.Delete(ds.ctx, k)
-	})
+	// 	if err := ds.ipfs.BlockStore().DeleteBlock(ds.ctx, c); err != nil {
+	// 		return err
+	// 	}
+
+	// 	k := datastore.KeyWithNamespaces([]string{nodePinPrefix, ds.nodeId, inode.Cid().String()})
+
+	// 	return ds.pinManagement.Delete(ds.ctx, k)
+	// })
 
 	return nil
 }

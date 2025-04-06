@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -143,6 +142,65 @@ func (sc *scopedClient) RemoveLocalContact(ctx context.Context, pub id.PublicID)
 	return sc.privDS.Delete(ctx, k)
 }
 
+func (sc *scopedClient) ListAllLocalContactsBy(ctx context.Context, cmp func(a, b *pb.Contact) int) (<-chan *pb.Contact, error) {
+	q, err := sc.privDS.Query(ctx, query.Query{
+		Prefix: sc.baseContactKey.String(),
+		Orders: []query.Order{
+			query.OrderByFunction(func(a, b query.Entry) int {
+				c1, err := decodeContact(a.Value)
+				if err != nil {
+					return 0
+				}
+				c2, err := decodeContact(b.Value)
+				if err != nil {
+					return 0
+				}
+
+				return cmp(c1, c2)
+			}),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	res := make(chan *pb.Contact)
+
+	go func() {
+		defer close(res)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case r, ok := <-q.Next():
+				if !ok {
+					return
+				}
+
+				c, err := decodeContact(r.Value)
+				if err != nil {
+					sc.logger.Error("decoding contact", zap.Error(err))
+					return
+				}
+				res <- c
+			}
+		}
+	}()
+
+	return res, nil
+}
+
+func decodeContact(d []byte) (*pb.Contact, error) {
+	c := &pb.Contact{}
+
+	if err := proto.Unmarshal(d, c); err != nil {
+		return nil, err
+	}
+
+	return c, nil
+}
+
 func (sc *scopedClient) ListLocalContacts(ctx context.Context, limit, offset int) ([]*pb.Contact, error) {
 	q, err := sc.privDS.Query(ctx, query.Query{
 		Prefix: sc.baseContactKey.String(),
@@ -156,9 +214,8 @@ func (sc *scopedClient) ListLocalContacts(ctx context.Context, limit, offset int
 	cs := []*pb.Contact{}
 
 	for v := range q.Next() {
-		c := &pb.Contact{}
-
-		if err := proto.Unmarshal(v.Value, c); err != nil {
+		c, err := decodeContact(v.Value)
+		if err != nil {
 			return nil, err
 		}
 
@@ -187,16 +244,10 @@ func (sc *scopedClient) SearchLocalContacts(ctx context.Context, query string) (
 }
 
 func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID) (<-chan *pb.DOSName, error) {
-	cl, err := sc.ListLocalContacts(ctx, 0, 0)
+	cl, err := sc.ListAllLocalContactsBy(ctx, sortByNumContactsDesc)
 	if err != nil {
 		return nil, err
 	}
-
-	if len(cl) == 0 {
-		return nil, errors.New("no contacts to ask")
-	}
-
-	slices.SortFunc(cl, sortByNumContacts)
 
 	visitedContacts := make(map[id.PublicID]struct{}, 100)
 	var mu sync.Mutex
@@ -280,12 +331,21 @@ func (sc *scopedClient) SearchForEdgeNames(ctx context.Context, pub id.PublicID)
 	go func() {
 		defer close(idCh)
 
-		for _, c := range cl {
+		didOne := false
+
+		for c := range cl {
 			select {
 			case <-ctx.Done():
 				return
 			case idCh <- id.PublicID(c.Id):
+				didOne = true
 			}
+		}
+
+		if !didOne {
+			//we had no contacts :(
+			sc.logger.Debug("no contacts in list to ask")
+			return
 		}
 
 		//After initial probing, lower the number of ordered random
@@ -402,6 +462,10 @@ func (p *PetnamesHandler) apiHandle_ListContact(w http.ResponseWriter, r *http.R
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	if limit == 0 {
+		limit = 200
 	}
 
 	if limit > 200 || limit < 0 {
