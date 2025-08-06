@@ -11,4 +11,5 @@ An extendable Personal Data Server built on P2P technologies.
 - plugins for:
 - - email gateway
   - activitypub forwarding
+  - petname-lioe contact list sharing with searchable DHT lookups
  
