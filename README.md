@@ -8,6 +8,7 @@ An decentralised extendable Personal Data Server built on P2P technologies.
 
 ## Features
 - Synchronise between multiple nodes using libp2p and end-to-end encryption, pubsub based updates and CRDT stores 
+- hosting multiple identities per node
 - plugins for:
 - - email gateway
   - activitypub forwarding
