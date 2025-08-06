@@ -4,12 +4,12 @@
 
 # Otter
 
-An extendable Personal Data Server built on P2P technologies.
+An decentralised extendable Personal Data Server built on P2P technologies.
 
 ## Features
-- Synchronise between multiple nodes
+- Synchronise between multiple nodes using libp2p and end-to-end encryption, pubsub based updates and CRDT stores 
 - plugins for:
 - - email gateway
   - activitypub forwarding
-  - petname-lioe contact list sharing with searchable DHT lookups
+  - petname-like contact list sharing with searchable DHT lookups
  
