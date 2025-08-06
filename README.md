@@ -5,3 +5,10 @@
 # Otter
 
 An extendable Personal Data Server built on P2P technologies.
+
+## Features
+- Synchronise between multiple nodes
+- plugins for:
+- - email gateway
+  - activitypub forwarding
+ 
